@@ -1,18 +1,15 @@
-﻿using System;
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Xml.Serialization;
 using ProtoBuf;
-using Sandbox.Common.ObjectBuilders.VRageData;
 using VRage.Utils;
 using VRageMath;
 using System.Diagnostics;
 using VRage.ObjectBuilders;
-using VRage;
 using VRage.ModAPI;
-using Sandbox.Common.ObjectBuilders.ComponentSystem;
+using VRage.Game.ObjectBuilders.ComponentSystem;
 using VRage.Serialization;
 
-namespace Sandbox.Common.ObjectBuilders
+namespace VRage.Game
 {
     [ProtoContract]
     [MyObjectBuilderDefinition]
@@ -22,6 +19,10 @@ namespace Sandbox.Common.ObjectBuilders
         [Serialize(MyObjectFlags.DefaultZero)]
         public long EntityId = 0;
         public bool ShouldSerializeEntityId() { return EntityId != 0; }
+
+        // TODO: Hotfixed, should inherit entity OB
+        [Serialize(MyObjectFlags.Nullable)]
+        public string Name;
 
         [ProtoMember]
         [Serialize(MyPrimitiveFlags.Variant, Kind = MySerializeKind.Item)]
@@ -111,6 +112,10 @@ namespace Sandbox.Common.ObjectBuilders
         [Serialize(MyObjectFlags.DefaultZero)]
         public long Owner = 0;
 
+        [ProtoMember, DefaultValue(0)]
+        [Serialize(MyObjectFlags.DefaultZero)]
+        public long BuiltBy = 0;
+
         //[ProtoMember, DefaultValue(false)]
         //public bool ShareWithFaction = false;
 
@@ -152,6 +157,14 @@ namespace Sandbox.Common.ObjectBuilders
         public SerializableDefinitionId? MultiBlockDefinition = null;
         public bool ShouldSerializeMultiBlockDefinition() { return MultiBlockId != 0 && MultiBlockDefinition != null; }
 
+        [ProtoMember, DefaultValue(-1)]
+        [Serialize]
+        public int MultiBlockIndex = -1;
+
+        [ProtoMember, DefaultValue(1f)]
+        [Serialize]
+        public float BlockGeneralDamageModifier = 1f;
+
         [ProtoMember, DefaultValue(null)]
         [Serialize(MyObjectFlags.Nullable)]
         public MyObjectBuilder_ComponentContainer ComponentContainer = null;
@@ -180,6 +193,10 @@ namespace Sandbox.Common.ObjectBuilders
 
         public virtual void SetupForProjector()
         {
+            //GK: Only for projector remove ownership of blueprint block at initialization (Or else can cause incosistences to ownership manager)
+            Owner = 0;
+            ShareMode = MyOwnershipShareModeEnum.None;
+            EntityId = 0; //GK: Will cause new allocation of ID for projector blueprints. In some cases the id will be the same as in projected grid when welded and entity will not be added
         }
     }
 }

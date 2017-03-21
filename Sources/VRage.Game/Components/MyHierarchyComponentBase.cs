@@ -1,44 +1,21 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using VRageMath;
-using VRage.Components;
 using VRage.ModAPI;
 using System.Diagnostics;
+using VRage.Game.Entity;
+using VRage.Game.ObjectBuilders.Components;
+using VRage.Game.ObjectBuilders.ComponentSystem;
 
-namespace VRage.Components
+namespace VRage.Game.Components
 {
+    [MyComponentBuilder(typeof(MyObjectBuilder_HierarchyComponentBase))]
     public class MyHierarchyComponentBase : MyEntityComponentBase
     {
-        private List<MyHierarchyComponentBase> m_children = new List<MyHierarchyComponentBase>();
+        protected List<MyHierarchyComponentBase> m_children = new List<MyHierarchyComponentBase>();
+        protected readonly List<MyEntity> m_deserializedEntities = new List<MyEntity>();
 
-        HashSet<object> QueryResults
-        {
-            get 
-            {
-                if (m_queryResults == null)
-                    m_queryResults = new HashSet<object>();
-                return m_queryResults;
-            }
-        }
-        HashSet<MyLineSegmentOverlapResult<object>> LineQueryResults
-        {
-            get
-            {
-                if (m_lineQueryResults == null)
-                    m_lineQueryResults = new HashSet<MyLineSegmentOverlapResult<object>>();
-                return m_lineQueryResults;
-            }
-        }
-        [ThreadStatic]
-        HashSet<object> m_queryResults = new HashSet<object>();
-        [ThreadStatic]
-        HashSet<MyLineSegmentOverlapResult<object>> m_lineQueryResults = new HashSet<MyLineSegmentOverlapResult<object>>();
-
-        public Action<BoundingBoxD, HashSet<object>> QueryAABBImpl;
-        public Action<BoundingSphereD, HashSet<object>> QuerySphereImpl;
-        public Action<LineD, HashSet<MyLineSegmentOverlapResult<object>>> QueryLineImpl;
+        public event Action<IMyEntity> OnChildRemoved;
 
         /// <summary>
         /// Return top most parent of this entity
@@ -56,6 +33,13 @@ namespace VRage.Components
             return parent;
         }
 
+        /**
+         * Identifier for the parent hierarchy.
+         * 
+         * This is should be reliably unique within a hierarchy level but only usable by the parent.
+         */
+        public long ChildId;
+
         /// <summary>
         /// Gets the childs collection.
         /// </summary>
@@ -69,9 +53,9 @@ namespace VRage.Components
 
         MyEntityComponentContainer m_parentContainer;
         MyHierarchyComponentBase m_parent;
-        public MyHierarchyComponentBase Parent 
-        { 
-            get { return m_parent; } 
+        public MyHierarchyComponentBase Parent
+        {
+            get { return m_parent; }
             set
             {
                 if (m_parentContainer != null)
@@ -118,6 +102,13 @@ namespace VRage.Components
             //MyEntities.Remove(child);  // if it's already in the world, remove it
 
             MyHierarchyComponentBase childHierarchy = child.Components.Get<MyHierarchyComponentBase>();
+
+            if (m_children.Contains(childHierarchy))
+            {
+                Debug.Fail("The child is already in the hierarchy.");
+                return;
+            }
+
             childHierarchy.Parent = this;
 
             if (preserveWorldPos)
@@ -182,44 +173,10 @@ namespace VRage.Components
 
             if (child.InScene)
                 child.OnRemovedFromScene(this);
-        }
 
-        public void QueryAABB<T>(ref BoundingBoxD aabb, List<T> result)
-        {
-            if (QueryAABBImpl != null)
-            {
-                QueryAABBImpl(aabb, QueryResults);
-                result.AddHashsetCasting(QueryResults);
-                QueryResults.Clear();
-            }
+            if (OnChildRemoved != null)
+                OnChildRemoved(child);
         }
-
-        public void QuerySphere<T>(ref BoundingSphereD sphere, List<T> result)
-        {
-            if (QuerySphereImpl != null)
-            {
-                QuerySphereImpl(sphere, QueryResults);
-                result.AddHashsetCasting(QueryResults);
-                QueryResults.Clear();
-            }
-        }
-
-        public void QueryLine<T>(ref LineD line, List<MyLineSegmentOverlapResult<T>> result)
-        {
-            if(QueryLineImpl != null)
-            {
-                QueryLineImpl(line, LineQueryResults);
-                MyLineSegmentOverlapResult<T> overlap = new MyLineSegmentOverlapResult<T>();
-                foreach (var r in LineQueryResults)
-                {
-                    overlap.Element = (T)r.Element;
-                    overlap.Distance = r.Distance;
-                    result.Add(overlap);
-                }
-                LineQueryResults.Clear();
-            }
-        }
-
         public void GetChildrenRecursive(HashSet<IMyEntity> result)
         {
             for (int i = 0; i < Children.Count; i++)
@@ -247,6 +204,65 @@ namespace VRage.Components
             m_parent = null;
 
             base.OnBeforeRemovedFromContainer();
+        }
+
+        public override bool IsSerialized()
+        {
+            return true;
+        }
+
+        public override void OnAddedToScene()
+        {
+            base.OnAddedToScene();
+
+            foreach (var child in m_children)
+            {
+                if (!child.Entity.InScene)
+                {
+                    child.Entity.OnAddedToScene(Container.Entity);
+                }
+            }
+        }
+
+        public override MyObjectBuilder_ComponentBase Serialize(bool copy = false)
+        {
+            var ob = new MyObjectBuilder_HierarchyComponentBase();
+
+            foreach (var child in Children)
+            {
+                //IMPORTANT - entities that are supposed to be saved in hierarchy should be saved ONLY in hierarchy
+                if (child.Entity.Save)
+                {
+                    ob.Children.Add(child.Entity.GetObjectBuilder(copy));
+                }
+            }
+            // Dont serialize when empty
+            return ob.Children.Count > 0 ? ob : null;
+        }
+
+        public override void Deserialize(MyObjectBuilder_ComponentBase builder)
+        {
+            base.Deserialize(builder);
+            var ob = builder as MyObjectBuilder_HierarchyComponentBase;
+
+            if (ob != null)
+            {
+                m_deserializedEntities.Clear();
+                foreach (var child in ob.Children)
+                {
+                    //IMPORTANT - entities that are supposed to be saved in hierarchy should be saved ONLY in hierarchy
+                    if (!MyEntityIdentifier.ExistsById(child.EntityId))
+                    {
+                        var childEntity = MyEntity.MyEntitiesCreateFromObjectBuilderExtCallback(child, true);
+                        m_deserializedEntities.Add(childEntity);
+                    }
+                }
+
+                foreach (var deserializedEntity in m_deserializedEntities)
+                {
+                    AddChild(deserializedEntity, true, false);
+                }
+            }
         }
     }
 }

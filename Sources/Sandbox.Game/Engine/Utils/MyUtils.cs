@@ -98,11 +98,38 @@ namespace Sandbox.Engine.Utils
     //    }
 
 
+    //    //	This tells if a sphere is BEHIND, in FRONT, or INTERSECTS a plane, also it's distance
+    //    public static MySpherePlaneIntersectionEnum GetSpherePlaneIntersection(ref BoundingSphereD sphere, ref MyPlane plane, out float distanceFromPlaneToSphere)
+    //    {
+    //        //  First we need to find the distance our polygon plane is from the origin.
+    //        float planeDistance = plane.GetPlaneDistance();
+
+    //        //  Here we use the famous distance formula to find the distance the center point
+    //        //  of the sphere is from the polygon's plane.  
+    //        distanceFromPlaneToSphere = (float)(plane.Normal.X * sphere.Center.X + plane.Normal.Y * sphere.Center.Y + plane.Normal.Z * sphere.Center.Z + planeDistance);
+
+    //        //  If the absolute value of the distance we just found is less than the radius, 
+    //        //  the sphere intersected the plane.
+    //        if (Math.Abs(distanceFromPlaneToSphere) < sphere.Radius)
+    //        {
+    //            return MySpherePlaneIntersectionEnum.INTERSECTS;
+    //        }
+    //        else if (distanceFromPlaneToSphere >= sphere.Radius)
+    //        {
+    //            //  Else, if the distance is greater than or equal to the radius, the sphere is
+    //            //  completely in FRONT of the plane.
+    //            return MySpherePlaneIntersectionEnum.FRONT;
+    //        }
+
+    //        //  If the sphere isn't intersecting or in FRONT of the plane, it must be BEHIND
+    //        return MySpherePlaneIntersectionEnum.BEHIND;
+    //    }
+
     //    //  Method returns intersection point between sphere and triangle (which is defined by vertexes and plane).
     //    //  If no intersection found, method returns null.
     //    //  See below how intersection point can be calculated, because it's not so easy - for example sphere vs. triangle will 
     //    //  hardly generate just intersection point... more like intersection area or something.
-    //    public static Vector3? GetSphereTriangleIntersection(ref BoundingSphereD sphere, ref MyPlane trianglePlane, ref MyTriangle_Vertexes triangle)
+    //    public static Vector3? GetSphereTriangleIntersection(ref BoundingSphereD sphere, ref MyPlane trianglePlane, ref MyTriangle_Vertices triangle)
     //    {
     //        //	Vzdialenost gule od roviny trojuholnika
     //        float distance;
@@ -145,7 +172,7 @@ namespace Sandbox.Engine.Utils
     //    }
 
     //    //	Return true if point is inside the triangle.
-    //    public static bool GetInsidePolygonForSphereCollision(ref Vector3 point, ref MyTriangle_Vertexes triangle)
+    //    public static bool GetInsidePolygonForSphereCollision(ref Vector3 point, ref MyTriangle_Vertices triangle)
     //    {
     //        const float MATCH_FACTOR = 0.99f;		// Used to cover up the error in floating point
     //        float angle = 0.0f;						// Initialize the angle

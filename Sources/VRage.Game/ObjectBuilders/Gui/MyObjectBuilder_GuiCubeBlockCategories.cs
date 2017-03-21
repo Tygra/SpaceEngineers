@@ -1,15 +1,11 @@
 ﻿#region Using
 
 using ProtoBuf;
-using System.Xml.Serialization;
-using System;
-using System.Collections.Generic;
-using VRageMath;
 using VRage.ObjectBuilders;
 
 #endregion
 
-namespace Sandbox.Common.ObjectBuilders.Definitions
+namespace VRage.Game
 {
     [ProtoContract]
     [MyObjectBuilderDefinition]
@@ -31,6 +27,15 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
         public bool SearchBlocks = true;
 
         [ProtoMember]
+        public bool IsAnimationCategory = false;
+
+        [ProtoMember]
+        public bool IsToolCategory = false;
+
+        [ProtoMember]
         public bool ShowAnimations = false;
+
+        [ProtoMember]
+        public bool ShowInCreative = true;
     }
 }

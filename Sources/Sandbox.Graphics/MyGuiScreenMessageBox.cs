@@ -1,8 +1,7 @@
-﻿using Sandbox.Common;
-using Sandbox.Common.ObjectBuilders.Gui;
-using System;
+﻿using System;
 using System.Text;
 using VRage;
+using VRage.Game;
 using VRage.Library.Utils;
 using VRage.Utils;
 using VRageMath;
@@ -32,8 +31,8 @@ namespace Sandbox.Graphics.GUI
         public class Style 
         {
             public MyGuiPaddedTexture BackgroundTexture;
-            public MyFontEnum CaptionFont;
-            public MyFontEnum TextFont;
+            public string CaptionFont;
+            public string TextFont;
             public MyGuiControlButtonStyleEnum ButtonStyle;
         }
 

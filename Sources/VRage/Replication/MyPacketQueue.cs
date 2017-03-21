@@ -1,8 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
-using System.Text;
 using VRage.Library.Collections;
 
 namespace VRage.Network
@@ -108,6 +105,14 @@ namespace VRage.Network
         {
             m_sender(item.Stream, item.Recipient);
             return (uint)item.Stream.BytePosition;
+        }
+
+        public void Dispose()
+        {
+            foreach (var item in m_cache)
+            {
+                item.Stream.Dispose();
+            }
         }
     }
 }

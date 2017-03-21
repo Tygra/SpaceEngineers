@@ -4,7 +4,7 @@ using VRage.ObjectBuilders;
 using VRageMath;
 using VRageRender;
 
-namespace VRage.Components
+namespace VRage.Game.Components
 {
     public abstract class MyRenderComponentBase : MyEntityComponentBase
     {
@@ -21,6 +21,7 @@ namespace VRage.Components
 
         protected Color m_diffuseColor = Color.White;  //diffuse color multiplier
 
+        public int LastMomentUpdateIndex = -1;
         /// <summary>
         /// Used by game to store model here. In game this is always of type MyModel.
         /// Implementation should only store and return passed object.
@@ -106,7 +107,8 @@ namespace VRage.Components
                 var m = Container.Entity.PositionComp.WorldMatrix;//Container.Get<MyPositionComponentBase>().WorldMatrix;
                 foreach (uint renderObjectID in m_renderObjectIDs)
                 {
-                    VRageRender.MyRenderProxy.UpdateRenderObject(renderObjectID, ref m, sortIntoCullobjects);
+                    if (renderObjectID != MyRenderProxy.RENDER_ID_UNASSIGNED)
+                        VRageRender.MyRenderProxy.UpdateRenderObject(renderObjectID, ref m, sortIntoCullobjects, null, LastMomentUpdateIndex);
                 }
             }
         }
@@ -114,7 +116,8 @@ namespace VRage.Components
         virtual public void UpdateRenderEntity(Vector3 colorMaskHSV)
         {
             m_colorMaskHsv = colorMaskHSV;
-            MyRenderProxy.UpdateRenderEntity(m_renderObjectIDs[0], m_diffuseColor, m_colorMaskHsv);
+            if (m_renderObjectIDs[0] != MyRenderProxy.RENDER_ID_UNASSIGNED)
+                MyRenderProxy.UpdateRenderEntity(m_renderObjectIDs[0], m_diffuseColor, m_colorMaskHsv);
         }
       
         public bool Visible
@@ -203,7 +206,8 @@ namespace VRage.Components
         {
             foreach (uint id in m_renderObjectIDs)
             {
-                VRageRender.MyRenderProxy.UpdateRenderObjectVisibility(id, visible, Container.Entity.NearFlag);
+                if (id != MyRenderProxy.RENDER_ID_UNASSIGNED)
+                    VRageRender.MyRenderProxy.UpdateRenderObjectVisibility(id, visible, Container.Entity.NearFlag);
             }
         }
 
@@ -253,7 +257,8 @@ namespace VRage.Components
                 {
                     //UpdateRenderObject(false); // Remove (because we need to remove from one group)
                     //UpdateRenderObject(true); // And insert again (...and insert into another)
-                    VRageRender.MyRenderProxy.UpdateRenderObjectVisibility(m_renderObjectIDs[0], Visible, NearFlag);
+                    if (m_renderObjectIDs[0] != MyRenderProxy.RENDER_ID_UNASSIGNED)
+                        VRageRender.MyRenderProxy.UpdateRenderObjectVisibility(m_renderObjectIDs[0], Visible, NearFlag);
                 }
 
                 MyHierarchyComponentBase hierarchy;
@@ -405,7 +410,15 @@ namespace VRage.Components
             }
         }
 
+        public bool OffsetInVertexShader
+        {
+            get;
+            set;
+        }
+
         public float Transparency;
+
+        public byte DepthBias = 0;
 
         public virtual RenderFlags GetRenderFlags()
         {
@@ -426,6 +439,7 @@ namespace VRage.Components
 				renderFlags |= RenderFlags.DrawOutsideViewDistance;
             if (ShadowBoxLod)
 				renderFlags |= RenderFlags.ShadowLodBox;
+
             return renderFlags;
         }
 

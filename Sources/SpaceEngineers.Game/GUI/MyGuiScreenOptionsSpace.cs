@@ -3,7 +3,6 @@ using Sandbox.Engine.Utils;
 using Sandbox.Game.Gui;
 using Sandbox.Game.Localization;
 using Sandbox.Graphics.GUI;
-using SpaceEngineers.Game.Gui;
 using System.Text;
 using VRage;
 using VRageMath;
@@ -24,7 +23,7 @@ namespace SpaceEngineers.Game.GUI
         {
             base.RecreateControls(constructor);
 
-            AddCaption(MySpaceTexts.ScreenCaptionOptions);
+            AddCaption(MyCommonTexts.ScreenCaptionOptions);
 
             Vector2 menuPositionOrigin = new Vector2(0.0f, -m_size.Value.Y / 2.0f + 0.146f);
 
@@ -32,42 +31,32 @@ namespace SpaceEngineers.Game.GUI
 
             Controls.Add(new MyGuiControlButton(
                 position: menuPositionOrigin + index++ * MyGuiConstants.MENU_BUTTONS_POSITION_DELTA,
-                text: MyTexts.Get(MySpaceTexts.ScreenOptionsButtonGame),
+                text: MyTexts.Get(MyCommonTexts.ScreenOptionsButtonGame),
                 onButtonClick: OnGameClick));
-
-            if (MyFakes.ENABLE_DX11_RENDERER)
-            {
-                Controls.Add(new MyGuiControlButton(
-                    position: menuPositionOrigin + index++ * MyGuiConstants.MENU_BUTTONS_POSITION_DELTA,
-                    text: new StringBuilder("Display"),
-                    onButtonClick: (sender) =>
-                    {
-                        MyGuiSandbox.AddScreen(new MyGuiScreenOptionsDisplay());
-                    }));
-                Controls.Add(new MyGuiControlButton(
-                    position: menuPositionOrigin + index++ * MyGuiConstants.MENU_BUTTONS_POSITION_DELTA,
-                    text: new StringBuilder("Graphics"),
-                    onButtonClick: (sender) =>
-                    {
-                        MyGuiSandbox.AddScreen(new MyGuiScreenOptionsGraphics());
-                    }));
-            }
-            else
-            {
-                Controls.Add(new MyGuiControlButton(
-                    position: menuPositionOrigin + index++ * MyGuiConstants.MENU_BUTTONS_POSITION_DELTA,
-                    text: MyTexts.Get(MySpaceTexts.ScreenOptionsButtonVideo),
-                    onButtonClick: OnDx9VideoClick));
-            }
 
             Controls.Add(new MyGuiControlButton(
                 position: menuPositionOrigin + index++ * MyGuiConstants.MENU_BUTTONS_POSITION_DELTA,
-                text: MyTexts.Get(MySpaceTexts.ScreenOptionsButtonAudio),
+                text: new StringBuilder("Display"),
+                onButtonClick: (sender) =>
+                {
+                    MyGuiSandbox.AddScreen(new MyGuiScreenOptionsDisplay());
+                }));
+            Controls.Add(new MyGuiControlButton(
+                position: menuPositionOrigin + index++ * MyGuiConstants.MENU_BUTTONS_POSITION_DELTA,
+                text: new StringBuilder("Graphics"),
+                onButtonClick: (sender) =>
+                {
+                    MyGuiSandbox.AddScreen(new MyGuiScreenOptionsGraphics());
+                }));
+
+            Controls.Add(new MyGuiControlButton(
+                position: menuPositionOrigin + index++ * MyGuiConstants.MENU_BUTTONS_POSITION_DELTA,
+                text: MyTexts.Get(MyCommonTexts.ScreenOptionsButtonAudio),
                 onButtonClick: OnAudioClick));
 
             Controls.Add(new MyGuiControlButton(
                 position: menuPositionOrigin + index++ * MyGuiConstants.MENU_BUTTONS_POSITION_DELTA,
-                text: MyTexts.Get(MySpaceTexts.ScreenOptionsButtonControls),
+                text: MyTexts.Get(MyCommonTexts.ScreenOptionsButtonControls),
                 onButtonClick: OnControlsClick));
 
             CloseButtonEnabled = true;
@@ -81,15 +70,6 @@ namespace SpaceEngineers.Game.GUI
         public void OnGameClick(MyGuiControlButton sender)
         {
             MyGuiSandbox.AddScreen(new MyGuiScreenOptionsGame());
-        }
-
-        public void OnDx9VideoClick(MyGuiControlButton sender)
-        {
-            MySandboxGame.Log.WriteLine("MyGuiScreenOptions.OnVideoClick START");
-
-            MyGuiSandbox.AddScreen(new MyGuiScreenOptionsVideoSpace());
-
-            MySandboxGame.Log.WriteLine("MyGuiScreenOptions.OnVideoClick END");
         }
 
         public void OnAudioClick(MyGuiControlButton sender)

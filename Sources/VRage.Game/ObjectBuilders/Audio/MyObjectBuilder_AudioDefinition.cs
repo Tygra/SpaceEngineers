@@ -1,19 +1,12 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+﻿using System.Collections.Generic;
 using System.Xml.Serialization;
 using ProtoBuf;
-using Sandbox.Common.ObjectBuilders.Definitions;
 using System.ComponentModel;
-using VRage.Data;
 using VRage.Utils;
-using VRage.Library.Utils;
 using VRage.Data.Audio;
-using VRage;
 using VRage.ObjectBuilders;
 
-namespace Sandbox.Common.ObjectBuilders.Audio
+namespace VRage.Game
 {
     [ProtoContract]
     [XmlType("Sound")]
@@ -48,6 +41,13 @@ namespace Sandbox.Common.ObjectBuilders.Audio
             set { SoundData.MaxDistance = value; }
         }
 
+        [ProtoMember]
+        public float UpdateDistance
+        {
+            get { return SoundData.UpdateDistance; }
+            set { SoundData.UpdateDistance = value; }
+        }
+
         [ProtoMember, DefaultValue(1.0f)]
         public float Volume
         {
@@ -67,6 +67,76 @@ namespace Sandbox.Common.ObjectBuilders.Audio
         {
             get { return SoundData.PitchVariation; }
             set { SoundData.PitchVariation = value; }
+        }
+
+        [ProtoMember, DefaultValue(0.0f)]
+        public float Pitch
+        {
+            get { return SoundData.Pitch; }
+            set { SoundData.Pitch = value; }
+        }
+
+        [ProtoMember, DefaultValue(-1)]
+        public int PreventSynchronization
+        {
+            get { return SoundData.PreventSynchronization; }
+            set { SoundData.PreventSynchronization = value; }
+        }
+
+        [ProtoMember]
+        public string DynamicMusicCategory
+        {
+            get { return SoundData.DynamicMusicCategory.ToString(); }
+            set { SoundData.DynamicMusicCategory = MyStringId.GetOrCompute(value); }
+        }
+
+        [ProtoMember]
+        public int DynamicMusicAmount
+        {
+            get { return SoundData.DynamicMusicAmount; }
+            set { SoundData.DynamicMusicAmount = value; }
+        }
+
+        [ProtoMember, DefaultValue(true)]
+        public bool ModifiableByHelmetFilters
+        {
+            get { return SoundData.ModifiableByHelmetFilters; }
+            set { SoundData.ModifiableByHelmetFilters = value; }
+        }
+
+        [ProtoMember, DefaultValue(false)]
+        public bool AlwaysUseOneMode
+        {
+            get { return SoundData.AlwaysUseOneMode; }
+            set { SoundData.AlwaysUseOneMode = value; }
+        }
+
+        [ProtoMember, DefaultValue(true)]
+        public bool CanBeSilencedByVoid
+        {
+            get { return SoundData.CanBeSilencedByVoid; }
+            set { SoundData.CanBeSilencedByVoid = value; }
+        }
+
+        [ProtoMember, DefaultValue(false)]
+        public bool StreamSound
+        {
+            get { return SoundData.StreamSound; }
+            set { SoundData.StreamSound = value; }
+        }
+
+        [ProtoMember, DefaultValue(false)]
+        public bool DisablePitchEffects
+        {
+            get { return SoundData.DisablePitchEffects; }
+            set { SoundData.DisablePitchEffects = value; }
+        }
+
+        [ProtoMember, DefaultValue(0)]
+        public int SoundLimit
+        {
+            get { return SoundData.SoundLimit; }
+            set { SoundData.SoundLimit = value; }
         }
 
         [ProtoMember, DefaultValue(false)]
@@ -97,6 +167,13 @@ namespace Sandbox.Common.ObjectBuilders.Audio
             set { SoundData.Waves = value; }
         }
 
+        [ProtoMember]
+        public List<DistantSound> DistantSounds
+        {
+            get { return SoundData.DistantSounds; }
+            set { SoundData.DistantSounds = value; }
+        }
+
         [ProtoMember, DefaultValue("")]
         public string TransitionCategory
         {
@@ -109,6 +186,20 @@ namespace Sandbox.Common.ObjectBuilders.Audio
         {
             get { return SoundData.MusicTrack.MusicCategory.ToString(); }
             set { SoundData.MusicTrack.MusicCategory = MyStringId.GetOrCompute(value); }
+        }
+
+        [ProtoMember, DefaultValue("")]
+        public string RealisticFilter
+        {
+            get { return SoundData.RealisticFilter.String; }
+            set { SoundData.RealisticFilter = MyStringHash.GetOrCompute(value); }
+        }
+
+        [ProtoMember, DefaultValue(1f)]
+        public float RealisticVolumeChange
+        {
+            get { return SoundData.RealisticVolumeChange; }
+            set { SoundData.RealisticVolumeChange = value; }
         }
     }
 }

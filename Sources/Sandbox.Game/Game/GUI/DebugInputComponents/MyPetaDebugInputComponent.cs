@@ -10,18 +10,25 @@ using Sandbox.Engine.Utils;
 using Sandbox.Game.Entities;
 using Sandbox.Game.Entities.Character;
 using Sandbox.Game.GameSystems.StructuralIntegrity;
+using Sandbox.Game.Multiplayer;
+using Sandbox.Game.Screens;
 using Sandbox.Game.World;
 using Sandbox.Graphics;
+using Sandbox.Graphics.GUI;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using VRage.Game;
+using VRage.Game.Entity;
 using VRage.Import;
 using VRage.Input;
 using VRage.Library.Utils;
 using VRage.ObjectBuilders;
 using VRage.Utils;
 using VRageMath;
+using VRageMath.Spatial;
 using VRageRender;
+using VRageRender.Import;
 
 #endregion
 
@@ -34,7 +41,7 @@ namespace Sandbox.Game.Gui
         {
             base.Init(objectBuilder);
 
-            Render.ModelStorage = MyModels.GetModelOnlyData(@"Models\StoneRoundLargeFull.mwm");
+            Render.ModelStorage = VRage.Game.Models.MyModels.GetModelOnlyData(@"Models\StoneRoundLargeFull.mwm");
         }     
     }
 
@@ -257,34 +264,26 @@ namespace Sandbox.Game.Gui
                 delegate
                 {
 
-                    foreach (var entity in MyEntities.GetEntities().ToList())
-                    {
-                        if (entity.Physics != null)
-                        {
-                            Vector3D posDelta = entity.Physics.LinearVelocity * SI_DYNAMICS_MULTIPLIER;
-                            MyPhysics.Clusters.EnsureClusterSpace(entity.PositionComp.WorldAABB + posDelta);
-
-                            if (entity.Physics.LinearVelocity.Length() > 0.1f)
-                            {
-                                entity.PositionComp.SetPosition(entity.PositionComp.GetPosition() + posDelta);
-                            }
-                        }
-                    }
+                    AdvanceEntities();
                     return true;
+
                 });
 
             AddShortcut(MyKeys.S, true, true, false, false,
                () => "Insert controllable sphere",
                delegate
                {
-                   MyControllableSphere sphere = new MyControllableSphere();
-                   sphere.Init();
-                   MyEntities.Add(sphere);
+                   if (Sync.IsServer)
+                   {
+                       MyControllableSphere sphere = new MyControllableSphere();
+                       sphere.Init();
+                       MyEntities.Add(sphere);
 
-                   sphere.PositionComp.SetPosition(MySector.MainCamera.Position + 2 * MySector.MainCamera.ForwardVector);
-                   sphere.Physics.Enabled = false;
+                       sphere.PositionComp.SetPosition(MySector.MainCamera.Position + 2 * MySector.MainCamera.ForwardVector);
+                       sphere.Physics.Enabled = false;
 
-                   MySession.LocalHumanPlayer.Controller.TakeControl(sphere);
+                       MySession.Static.LocalHumanPlayer.Controller.TakeControl(sphere);
+                   }
                    return true;
                });
 
@@ -301,7 +300,7 @@ namespace Sandbox.Game.Gui
             () => "Insert 2 trees",
             delegate
             {
-                //MySession.LocalCharacter.AddCommand(new MyAnimationCommand()
+                //MySession.Static.LocalCharacter.AddCommand(new MyAnimationCommand()
                 //{
                 //    AnimationSubtypeName = "Wave",
                 //    BlendTime = 0.3f,
@@ -321,13 +320,21 @@ namespace Sandbox.Game.Gui
                   return true;
               });
 
-              AddShortcut(MyKeys.NumPad7, true, false, false, false,
-              () => "Use next ship",
-              delegate
-              {
-                  MyCharacterInputComponent.UseNextShip();
-                  return true;
-              });
+              //AddShortcut(MyKeys.NumPad7, true, false, false, false,
+              //() => "Use next ship",
+              //delegate
+              //{
+              //    MyCharacterInputComponent.UseNextShip();
+              //    return true;
+              //});
+
+            AddShortcut(MyKeys.NumPad7, true, false, false, false,
+            () => "Highlight GScreen",
+            delegate
+            {
+                HighlightGScreen();
+                return true;
+            });
 
               //AddShortcut(MyKeys.NumPad5, true, false, false, false,
               //  () => "Insert tree",
@@ -353,7 +360,6 @@ namespace Sandbox.Game.Gui
                  MyDebugDrawSettings.ENABLE_DEBUG_DRAW = !MyDebugDrawSettings.ENABLE_DEBUG_DRAW;
                  if (MyDebugDrawSettings.ENABLE_DEBUG_DRAW)
                  {
-                     MyStructuralIntegrity.Enabled = true;
                      MyDebugDrawSettings.DEBUG_DRAW_STRUCTURAL_INTEGRITY = true;
                      DEBUG_DRAW_PATHS = true;
                      DEBUG_DRAW_TENSIONS = false;
@@ -377,17 +383,6 @@ namespace Sandbox.Game.Gui
                  return true;
              });
 
-              AddShortcut(MyKeys.NumPad1, true, false, false, false,
-             () => "Reorder clusters",
-             delegate
-             {
-                 if (MySession.ControlledEntity != null)
-                 {
-                     MySession.ControlledEntity.Entity.GetTopMostParent().Physics.ReorderClusters();
-                 }
-                 return true;
-             });
-
               AddShortcut(MyKeys.NumPad3, true, false, false, false,
              () => "SI Debug draw tensions",
              delegate
@@ -395,7 +390,6 @@ namespace Sandbox.Game.Gui
                  MyDebugDrawSettings.ENABLE_DEBUG_DRAW = !MyDebugDrawSettings.ENABLE_DEBUG_DRAW;
                  if (MyDebugDrawSettings.ENABLE_DEBUG_DRAW)
                  {
-                     MyStructuralIntegrity.Enabled = true;
                      MyDebugDrawSettings.DEBUG_DRAW_STRUCTURAL_INTEGRITY = true;
                      DEBUG_DRAW_PATHS = false;
                      DEBUG_DRAW_TENSIONS = true;
@@ -432,6 +426,9 @@ namespace Sandbox.Game.Gui
                  () => "SI Selected cube up",
                  delegate
                  {
+                     if (!MyDebugDrawSettings.DEBUG_DRAW_STRUCTURAL_INTEGRITY)
+                         return false;
+
                      MyAdvancedStaticSimulator.SelectedCube = new Vector3I(MyAdvancedStaticSimulator.SelectedCube.X, MyAdvancedStaticSimulator.SelectedCube.Y + 1, MyAdvancedStaticSimulator.SelectedCube.Z);
                      return true;
                  });
@@ -439,6 +436,9 @@ namespace Sandbox.Game.Gui
                  () => "SI Selected cube down",
                  delegate
                  {
+                     if (!MyDebugDrawSettings.DEBUG_DRAW_STRUCTURAL_INTEGRITY)
+                         return false;
+
                      MyAdvancedStaticSimulator.SelectedCube = new Vector3I(MyAdvancedStaticSimulator.SelectedCube.X, MyAdvancedStaticSimulator.SelectedCube.Y - 1, MyAdvancedStaticSimulator.SelectedCube.Z);
                      return true;
                  });
@@ -446,6 +446,9 @@ namespace Sandbox.Game.Gui
                    () => "SI Selected cube left",
                    delegate
                    {
+                       if (!MyDebugDrawSettings.DEBUG_DRAW_STRUCTURAL_INTEGRITY)
+                           return false;
+
                        MyAdvancedStaticSimulator.SelectedCube = new Vector3I(MyAdvancedStaticSimulator.SelectedCube.X - 1, MyAdvancedStaticSimulator.SelectedCube.Y, MyAdvancedStaticSimulator.SelectedCube.Z);
                        return true;
                    });
@@ -453,6 +456,9 @@ namespace Sandbox.Game.Gui
                    () => "SI Selected cube right",
                    delegate
                    {
+                       if (!MyDebugDrawSettings.DEBUG_DRAW_STRUCTURAL_INTEGRITY)
+                           return false;
+
                        MyAdvancedStaticSimulator.SelectedCube = new Vector3I(MyAdvancedStaticSimulator.SelectedCube.X + 1, MyAdvancedStaticSimulator.SelectedCube.Y, MyAdvancedStaticSimulator.SelectedCube.Z);
                        return true;
                    });
@@ -467,6 +473,9 @@ namespace Sandbox.Game.Gui
                        () => "SI Selected cube back",
                        delegate
                        {
+                           if (!MyDebugDrawSettings.DEBUG_DRAW_STRUCTURAL_INTEGRITY)
+                               return false;
+
                            MyAdvancedStaticSimulator.SelectedCube = new Vector3I(MyAdvancedStaticSimulator.SelectedCube.X, MyAdvancedStaticSimulator.SelectedCube.Y, MyAdvancedStaticSimulator.SelectedCube.Z + 1);
                            return true;
                        });
@@ -495,6 +504,79 @@ namespace Sandbox.Game.Gui
                         });
 
             
+        }
+
+        private static void AdvanceEntities()
+        {
+            //foreach (var entity in MyEntities.GetEntities().ToList())
+            //{
+            //    if (entity.Physics != null)
+            //    {
+            //        Vector3D posDelta = entity.Physics.LinearVelocity * SI_DYNAMICS_MULTIPLIER;
+            //        MyPhysics.EnsurePhysicsSpace(entity.PositionComp.WorldAABB + posDelta);
+
+            //        if (entity.Physics.LinearVelocity.Length() > 0.1f)
+            //        {
+            //            entity.PositionComp.SetPosition(entity.PositionComp.GetPosition() + posDelta);
+            //        }
+            //    }
+            //}
+
+
+            Vector3D posDelta = Vector3.Forward * SI_DYNAMICS_MULTIPLIER * 500;
+
+            //foreach (var entity in MyEntities.GetEntities().ToList())
+            //{
+            //    if (entity.Physics != null)
+            //    {
+            //        MyPhysics.EnsurePhysicsSpace(entity.PositionComp.WorldAABB + posDelta);
+
+            //        entity.PositionComp.SetPosition(entity.PositionComp.GetPosition() + posDelta);
+            //    }
+            //}
+
+
+            int framesMovingSimulate = 1000;
+
+            while (framesMovingSimulate-- > 0)
+            {
+                foreach (var entity in MyEntities.GetEntities().ToList())
+                {
+                    if (entity.Physics != null)
+                    {
+                        Vector3D velocity = entity.Physics.LinearVelocity * SI_DYNAMICS_MULTIPLIER;
+
+                        var aabb = MyClusterTree.AdjustAABBByVelocity(entity.PositionComp.WorldAABB, velocity);
+
+                        MyPhysics.EnsurePhysicsSpace(aabb);
+                    }
+                }
+
+                MySession.Static.Update(MyTimeSpan.Zero);
+                //foreach (var entity in MyEntities.GetEntities().ToList())
+                //{
+                //    if (entity.Physics != null)
+                //    {
+                //        //Vector3D posDelta = entity.Physics.LinearVelocity * SI_DYNAMICS_MULTIPLIER;
+                //        //entity.PositionComp.SetPosition(entity.PositionComp.GetPosition() + posDelta);
+
+                //    }
+                //}
+            }
+
+            //Vector3D posDelta2 = Vector3.Forward * SI_DYNAMICS_MULTIPLIER * 500;
+
+            //foreach (var entity in MyEntities.GetEntities().ToList())
+            //{
+            //    if (entity.Physics != null)
+            //    {
+            //        MyPhysics.EnsurePhysicsSpace(entity.PositionComp.WorldAABB + posDelta2);
+
+            //        entity.PositionComp.SetPosition(entity.PositionComp.GetPosition() + posDelta2);
+            //    }
+            //}
+
+
         }
 
         public override bool HandleInput()
@@ -552,22 +634,22 @@ namespace Sandbox.Game.Gui
 
                 MatrixD worldMatrix = m_voxelMap.PositionComp.WorldMatrix;
 
-                //var rotationMatrix = Matrix.CreateRotationZ(0.01f);
-                //worldMatrix *= rotationMatrix;
-                //centerDelta = Vector3.TransformNormal(centerDelta, rotationMatrix);
+                var rotationMatrix = Matrix.CreateRotationZ(0.01f);
+                worldMatrix *= rotationMatrix;
+                centerDelta = Vector3.TransformNormal(centerDelta, rotationMatrix);
 
-                //worldMatrix.Translation = center + centerDelta;
+                worldMatrix.Translation = center + centerDelta;
 
-               // m_voxelMap.PositionComp.WorldMatrix = worldMatrix;
+                //m_voxelMap.PositionComp.WorldMatrix = worldMatrix;
 
 
                 SI_DYNAMICS_MULTIPLIER += 0.01f;
 
-                var tr = worldMatrix.Translation;
-                worldMatrix.Translation = new Vector3D(tr.X += (double)MyMath.FastSin(SI_DYNAMICS_MULTIPLIER), tr.Y, tr.Z);
+                //var tr = worldMatrix.Translation;
+                //worldMatrix.Translation = new Vector3D(tr.X += (double)MyMath.FastSin(SI_DYNAMICS_MULTIPLIER), tr.Y, tr.Z);
                 //worldMatrix.Translation = new Vector3D(tr.X + 100, tr.Y, tr.Z);
 
-//                m_voxelMap.PositionComp.WorldMatrix = worldMatrix;
+                //m_voxelMap.PositionComp.WorldMatrix = worldMatrix;
 
                 var localBB = m_voxelMap.PositionComp.LocalAABB;
                 MyOrientedBoundingBoxD orb = new MyOrientedBoundingBoxD((BoundingBoxD)localBB, m_voxelMap.PositionComp.WorldMatrix);
@@ -646,6 +728,7 @@ namespace Sandbox.Game.Gui
                 }
             }
 
+            return;
 
             VRageRender.MyRenderProxy.DebugDrawAxis(m_teapotMatrix, 100f, false);
 
@@ -852,7 +935,7 @@ namespace Sandbox.Game.Gui
                 Vector3D closestPoint = Vector3.Zero;
                 Vector3D campos = MySector.MainCamera.Position;
                 closestPoint = MyUtils.GetClosestPointOnLine(ref lineStart, ref lineEnd, ref campos);
-                var distance = MySector.MainCamera.GetDistanceWithFOV(closestPoint);
+                var distance = MySector.MainCamera.GetDistanceFromPoint(closestPoint);
 
                 var lineThickness = thickness * MathHelper.Clamp(distance, 0.1f, 10);
 
@@ -866,17 +949,17 @@ namespace Sandbox.Game.Gui
             MyDefinitionId id = new MyDefinitionId(MyObjectBuilderType.Parse("MyObjectBuilder_Tree"), "Tree04_v2");
             var itemDefinition = MyDefinitionManager.Static.GetEnvironmentItemDefinition(id);
 
-            if (MyModels.GetModelOnlyData(itemDefinition.Model).HavokBreakableShapes != null)
+            if (VRage.Game.Models.MyModels.GetModelOnlyData(itemDefinition.Model).HavokBreakableShapes != null)
             {
-                var breakableShape = MyModels.GetModelOnlyData(itemDefinition.Model).HavokBreakableShapes[0].Clone();
-                MatrixD worldMatrix = MatrixD.CreateWorld(MySession.ControlledEntity.Entity.PositionComp.GetPosition() +2 * MySession.ControlledEntity.Entity.WorldMatrix.Forward, Vector3.Forward, Vector3.Up);
+                var breakableShape = VRage.Game.Models.MyModels.GetModelOnlyData(itemDefinition.Model).HavokBreakableShapes[0].Clone();
+                MatrixD worldMatrix = MatrixD.CreateWorld(MySession.Static.ControlledEntity.Entity.PositionComp.GetPosition() +2 * MySession.Static.ControlledEntity.Entity.WorldMatrix.Forward, Vector3.Forward, Vector3.Up);
 
 
 
                 List<HkdShapeInstanceInfo> children = new List<HkdShapeInstanceInfo>();
                 breakableShape.GetChildren(children);
                 children[0].Shape.SetFlagRecursively(HkdBreakableShape.Flags.IS_FIXED);
-                var piece = Sandbox.Engine.Physics.MyDestructionHelper.CreateFracturePiece(breakableShape, MyPhysics.SingleWorld.DestructionWorld, ref worldMatrix, false, itemDefinition.Id, true);
+                var piece = MyDestructionHelper.CreateFracturePiece(breakableShape, ref worldMatrix, false, itemDefinition.Id, true);
             }
 
         }
@@ -885,31 +968,27 @@ namespace Sandbox.Game.Gui
 
         void InsertVoxelMap()
         {
-            MatrixD worldMatrix = MatrixD.CreateWorld(MySession.ControlledEntity.Entity.PositionComp.GetPosition() + 25 * MySession.ControlledEntity.Entity.WorldMatrix.Forward, MySession.ControlledEntity.Entity.WorldMatrix.Forward, MySession.ControlledEntity.Entity.WorldMatrix.Up);
-            //m_voxelMap = MyWorldGenerator.AddAsteroidPrefab("DeformedSphere2_64x64x64", worldMatrix.Translation, "Test");
+            //MatrixD worldMatrix = MatrixD.CreateWorld(MySector.MainCamera.Position + 25 * MySector.MainCamera.ForwardVector, MySector.MainCamera.ForwardVector, MySector.MainCamera.UpVector);
 
 
-            string[] vms = new string[]
-                {
-                    "small_horse_overhang",
-                    //"small_largestone",
-                    //"small_mediumstone",
-                    "small_overhang_flat",
-                    //"small_smallstone"
-                };
+            //string[] vms = new string[]
+            //    {
+            //        "small_horse_overhang",
+            //        //"small_largestone",
+            //        //"small_mediumstone",
+            //        "small_overhang_flat",
+            //        //"small_smallstone"
+            //    };
 
 
-            Matrix wm = Matrix.CreateRotationX(-MathHelper.PiOver2);
+            //Matrix wm = Matrix.CreateRotationX(-MathHelper.PiOver2);
             
-           // for (int i = 0; i < vms.Length; i++)
-            {
-             //   wm.Translation = worldMatrix.Translation;
-                m_voxelMap = Sandbox.Game.World.MyWorldGenerator.AddAsteroidPrefab(vms[0], worldMatrix, "Test");
-                m_voxelMap.IsStaticForCluster = false;
-             //   m_voxelMap.WorldMatrix = wm;
+            //var name = vms[0];
+            //var fileName = MyWorldGenerator.GetVoxelPrefabPath(name);
+            //var storage = Sandbox.Engine.Voxels.MyStorageBase.Load(fileName);
+            //m_voxelMap = MyWorldGenerator.AddVoxelMap(name, storage, worldMatrix);
 
-               // worldMatrix.Translation += new Vector3D(100, 0, 0);
-            }
+            //m_voxelMap.IsStaticForCluster = false;
 
         }
 
@@ -920,6 +999,7 @@ namespace Sandbox.Game.Gui
             var skin = new MySkinnedEntity();
 
             MyObjectBuilder_Character ob = new MyObjectBuilder_Character();
+            ob.EntityDefinitionId = new SerializableDefinitionId(typeof(MyObjectBuilder_Character), "Medieval_barbarian");
             ob.PositionAndOrientation = new VRage.MyPositionAndOrientation(MySector.MainCamera.Position + 2 * MySector.MainCamera.ForwardVector, MySector.MainCamera.ForwardVector, MySector.MainCamera.UpVector);
             skin.Init(null, @"Models\Characters\Basic\ME_barbar.mwm", null, null);
             skin.Init(ob);
@@ -980,6 +1060,69 @@ namespace Sandbox.Game.Gui
              //           Vector3.Zero,
              //           0,
              //           1000);
+        }
+
+        static void HighlightGScreen()
+        {
+            ////Inventory
+            //var terminal = MyScreenManager.GetScreenWithFocus();
+            //var terminalTabs = terminal.GetControlByName("TerminalTabs");
+            //var inventory = ((MyGuiControlTabControl)terminalTabs).GetControlByName("PageInventory");
+            //var leftInventory = ((MyGuiControlTabPage)inventory).GetControlByName("LeftInventory");
+            //var rightInventory = ((MyGuiControlTabPage)inventory).GetControlByName("RightInventory");
+            //var leftFirst = ((Sandbox.Game.Screens.Helpers.MyGuiControlInventoryOwner)((MyGuiControlList)leftInventory).GetControlByName("MyGuiControlInventoryOwner"));
+            //var rightFirst = ((Sandbox.Game.Screens.Helpers.MyGuiControlInventoryOwner)((MyGuiControlList)rightInventory).GetControlByName("MyGuiControlInventoryOwner"));
+            //var firstLeftGrid = leftFirst.ContentGrids[0];
+            //var firstRightGrid = rightFirst.ContentGrids[0];
+
+            //var drag = ((MyGuiControlTabPage)inventory).GetControlByName("MyGuiControlGridDragAndDrop");
+
+            //MyGuiScreenHighlight.MyHighlightControl[] controlData =
+            //    new MyGuiScreenHighlight.MyHighlightControl[]
+            //    {
+            //        new MyGuiScreenHighlight.MyHighlightControl()
+            //        {
+            //            Control = firstLeftGrid,
+            //            Indices = new int[] {0 ,1, 2}
+            //        },
+            //        new MyGuiScreenHighlight.MyHighlightControl()
+            //        {
+            //            Control = drag,
+            //        },
+            //        new MyGuiScreenHighlight.MyHighlightControl()
+            //        {
+            //            Control = firstRightGrid,
+            //            Indices = new int[] {0}
+            //        },
+            //    };
+
+            //GScreen
+            var gscreen = MyScreenManager.GetScreenWithFocus();
+            var panel = gscreen.GetControlByName("ScrollablePanel").Elements[0];
+            var drag = gscreen.GetControlByName("MyGuiControlGridDragAndDrop");
+            var toolbar = gscreen.GetControlByName("MyGuiControlToolbar").Elements[2];
+
+            MyGuiScreenHighlight.MyHighlightControl[] controlData =
+                new MyGuiScreenHighlight.MyHighlightControl[]
+                {
+                    new MyGuiScreenHighlight.MyHighlightControl()
+                    {
+                        Control = panel,
+                        Indices = new int[] {0 ,1, 2}
+                    },
+                    new MyGuiScreenHighlight.MyHighlightControl()
+                    {
+                        Control = drag,
+                    },
+                    new MyGuiScreenHighlight.MyHighlightControl()
+                    {
+                        Control = toolbar,
+                        Indices = new int[] {0}
+                    },
+                };
+
+
+            MyGuiScreenHighlight.HighlightControls(controlData);
         }
     }
 }

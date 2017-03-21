@@ -404,6 +404,7 @@
       <SearchBlocks>false</SearchBlocks>
       <IsShipCategory>true</IsShipCategory>
       <IsBlockCategory>false</IsBlockCategory>
+      <IsToolCategory>true</IsToolCategory>
       <ItemIds>
         <string>ShipGrinder/LargeShipGrinder</string>
         <string>ShipWelder/LargeShipWelder</string>
@@ -496,7 +497,7 @@
         <string>ConveyorTubeCurved</string>
         <string>ConveyorTubeSmallCurved</string>
         <string>ConveyorTubeCurvedMedium</string>
-        <string>SmallShipConveyorHub</string>
+        <!--<string>SmallShipConveyorHub</string>-->
         <string>ConveyorSorter/LargeBlockConveyorSorter</string>
         <string>ConveyorSorter/MediumBlockConveyorSorter</string>
         <string>ConveyorSorter/SmallBlockConveyorSorter</string>
@@ -514,6 +515,7 @@
       <Name>CharacterAnimations</Name>
       <IsShipCategory>true</IsShipCategory>
       <ShowAnimations>true</ShowAnimations>
+      <IsAnimationCategory>true</IsAnimationCategory>
       <ItemIds>
         <string>Wave</string>
         <string>Victory</string>
@@ -529,11 +531,28 @@
       <DisplayName>DisplayName_Category_CharacterTools</DisplayName>
       <Name>CharacterTools</Name>
       <SearchBlocks>false</SearchBlocks>
+      <IsToolCategory>true</IsToolCategory>
       <ItemIds>
         <string>AutomaticRifleItem</string>
+        <string>RapidFireAutomaticRifleItem</string>
+        <string>PreciseAutomaticRifleItem</string>
+        <string>UltimateAutomaticRifleItem</string>
         <string>WelderItem</string>
+        <string>Welder2Item</string>
+        <string>Welder3Item</string>
+        <string>Welder4Item</string>
         <string>AngleGrinderItem</string>
+        <string>AngleGrinder2Item</string>
+        <string>AngleGrinder3Item</string>
+        <string>AngleGrinder4Item</string>
         <string>HandDrillItem</string>
+        <string>HandDrill2Item</string>
+        <string>HandDrill3Item</string>
+        <string>HandDrill4Item</string>
+        <string>GridCreateToolDefinition/CreateStation</string>
+        <string>GridCreateToolDefinition/CreateLargeShip</string>
+        <string>GridCreateToolDefinition/CreateSmallShip</string>
+        <string>GoodAIRewardPunishmentTool</string>
       </ItemIds>
     </Category>
     <Category xsi:type="MyObjectBuilder_GuiBlockCategoryDefinition">
@@ -624,6 +643,7 @@
       <DisplayName>DisplayName_Category_VoxelHands</DisplayName>
       <Name>VoxelHands</Name>
       <Public>true</Public>
+      <AvailableInSurvival>false</AvailableInSurvival>
       <ItemIds>
         <string>VoxelHandDefinition/Box</string>
         <string>VoxelHandDefinition/Capsule</string>

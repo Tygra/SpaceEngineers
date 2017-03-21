@@ -8,6 +8,8 @@ using System.Text;
 using Sandbox.Game.World;
 using Sandbox.Game.Entities;
 using Sandbox.Engine.Multiplayer;
+using VRage.Game;
+using VRage.Game.Entity;
 
 namespace Sandbox.Game.Screens.Helpers
 {
@@ -26,9 +28,9 @@ namespace Sandbox.Game.Screens.Helpers
             if (Definition == null)
                 return false;
 
-            MySessionComponentThrower.Static.Enabled = Sandbox.Engine.Utils.MyFakes.ENABLE_PREFAB_THROWER && !MySession.Static.Battle;
+            MySessionComponentThrower.Static.Enabled = Sandbox.Engine.Utils.MyFakes.ENABLE_PREFAB_THROWER;
             MySessionComponentThrower.Static.CurrentDefinition = (MyPrefabThrowerDefinition)Definition;
-            var controlledObject = MySession.ControlledEntity as IMyControllableEntity;
+            var controlledObject = MySession.Static.ControlledEntity as IMyControllableEntity;
             if (controlledObject != null)
             {
                 controlledObject.SwitchToWeapon(null);
@@ -40,7 +42,7 @@ namespace Sandbox.Game.Screens.Helpers
         public override bool AllowedInToolbarType(MyToolbarType type)
         {
             //So, this is not the way, because server is handling this...?
-            //if (VRage.Input.MyInput.Static.ENABLE_DEVELOPER_KEYS || !MySession.Static.SurvivalMode || (MyMultiplayer.Static != null && MyMultiplayer.Static.IsAdmin(MySession.LocalHumanPlayer.Id.SteamId)))
+            //if (VRage.Input.MyInput.Static.ENABLE_DEVELOPER_KEYS || !MySession.Static.SurvivalMode || (MyMultiplayer.Static != null && MyMultiplayer.Static.IsAdmin(MySession.Static.LocalHumanPlayer.Id.SteamId)))
             {
                 return type == MyToolbarType.Character || type == MyToolbarType.Spectator;
             }
@@ -48,10 +50,10 @@ namespace Sandbox.Game.Screens.Helpers
             return false;
         }
 
-        public override MyToolbarItem.ChangeInfo Update(Entities.MyEntity owner, long playerID = 0)
+        public override MyToolbarItem.ChangeInfo Update(MyEntity owner, long playerID = 0)
         {
             var blockDefinition = MySessionComponentThrower.Static.Enabled ? MySessionComponentThrower.Static.CurrentDefinition : null;
-            WantsToBeSelected = MySessionComponentThrower.Static.Enabled && !MySession.Static.Battle && blockDefinition != null && blockDefinition.Id.SubtypeId == (this.Definition as MyPrefabThrowerDefinition).Id.SubtypeId;
+            WantsToBeSelected = MySessionComponentThrower.Static.Enabled && blockDefinition != null && blockDefinition.Id.SubtypeId == (this.Definition as MyPrefabThrowerDefinition).Id.SubtypeId;
             return ChangeInfo.None;
         }
     }

@@ -7,7 +7,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using Sandbox.Game.World;
 using VRage;
+using VRage.Input;
 using VRage.Utils;
 using VRageMath;
 using VRageRender;
@@ -22,6 +24,7 @@ namespace Sandbox.Game.Gui
         private MyGuiControlCombobox m_comboResolution;
         private MyGuiControlCombobox m_comboWindowMode;
         private MyGuiControlCheckbox m_checkboxVSync;
+        private MyGuiControlCheckbox m_checkboxCaptureMouse;
 
         private MyRenderDeviceSettings m_settingsOld;
         private MyRenderDeviceSettings m_settingsNew;
@@ -37,7 +40,6 @@ namespace Sandbox.Game.Gui
         {
             EnabledBackgroundFade = true;
             Size = new Vector2(1000f, 650f) / MyGuiConstants.GUI_OPTIMAL_SIZE;
-            LoadResolutions();
             RecreateControls(true);
         }
 
@@ -61,15 +63,17 @@ namespace Sandbox.Game.Gui
 
             const float TEXT_SCALE = Sandbox.Graphics.GUI.MyGuiConstants.DEFAULT_TEXT_SCALE * 0.85f;
 
-            var labelVideoAdapter = new MyGuiControlLabel(textScale: TEXT_SCALE, text: MyTexts.GetString(MySpaceTexts.VideoAdapter));
-            var labelResolution   = new MyGuiControlLabel(textScale: TEXT_SCALE, text: MyTexts.GetString(MySpaceTexts.VideoMode));
-            var labelWindowMode   = new MyGuiControlLabel(textScale: TEXT_SCALE, text: MyTexts.GetString(MySpaceTexts.ScreenOptionsVideo_WindowMode));
-            var labelVSync        = new MyGuiControlLabel(textScale: TEXT_SCALE, text: MyTexts.GetString(MySpaceTexts.VerticalSync));
+            var labelVideoAdapter = new MyGuiControlLabel(textScale: TEXT_SCALE, text: MyTexts.GetString(MyCommonTexts.VideoAdapter));
+            var labelResolution   = new MyGuiControlLabel(textScale: TEXT_SCALE, text: MyTexts.GetString(MyCommonTexts.VideoMode));
+            var labelWindowMode   = new MyGuiControlLabel(textScale: TEXT_SCALE, text: MyTexts.GetString(MyCommonTexts.ScreenOptionsVideo_WindowMode));
+            var labelVSync        = new MyGuiControlLabel(textScale: TEXT_SCALE, text: MyTexts.GetString(MyCommonTexts.VerticalSync));
+            var labelCaptureMouse = new MyGuiControlLabel(textScale: TEXT_SCALE, text: MyTexts.GetString(MyCommonTexts.CaptureMouse));
 
-            m_comboVideoAdapter = new MyGuiControlCombobox(size: comboboxSize, toolTip: MyTexts.GetString(MySpaceTexts.ToolTipVideoOptionsVideoAdapter));
-            m_comboResolution   = new MyGuiControlCombobox(size: comboboxSize, toolTip: MyTexts.GetString(MySpaceTexts.ToolTipVideoOptionsVideoMode));
+            m_comboVideoAdapter = new MyGuiControlCombobox(size: comboboxSize, toolTip: MyTexts.GetString(MyCommonTexts.ToolTipVideoOptionsVideoAdapter));
+            m_comboResolution   = new MyGuiControlCombobox(size: comboboxSize, toolTip: MyTexts.GetString(MyCommonTexts.ToolTipVideoOptionsVideoMode));
             m_comboWindowMode   = new MyGuiControlCombobox(size: comboboxSize);
-            m_checkboxVSync     = new MyGuiControlCheckbox(toolTip: MyTexts.GetString(MySpaceTexts.ToolTipVideoOptionsVerticalSync));
+            m_checkboxCaptureMouse     = new MyGuiControlCheckbox(toolTip: MyTexts.GetString(MyCommonTexts.ToolTipVideoOptionsCaptureMouse));
+            m_checkboxVSync     = new MyGuiControlCheckbox(toolTip: MyTexts.GetString(MyCommonTexts.ToolTipVideoOptionsVerticalSync));
 
             m_labelUnsupportedAspectRatio = new MyGuiControlLabel(colorMask: MyGuiConstants.LABEL_TEXT_COLOR * 0.9f, textScale: TEXT_SCALE * 0.85f);
             m_labelRecommendAspectRatio   = new MyGuiControlLabel(colorMask: MyGuiConstants.LABEL_TEXT_COLOR * 0.9f, textScale: TEXT_SCALE * 0.85f);
@@ -89,6 +93,8 @@ namespace Sandbox.Game.Gui
 
             labelWindowMode.Position   = controlsOriginLeft; controlsOriginLeft += MyGuiConstants.CONTROLS_DELTA;
             m_comboWindowMode.Position = controlsOriginRight; controlsOriginRight += MyGuiConstants.CONTROLS_DELTA;
+            labelCaptureMouse.Position = controlsOriginLeft; controlsOriginLeft += MyGuiConstants.CONTROLS_DELTA;
+            m_checkboxCaptureMouse.Position = controlsOriginRight; controlsOriginRight += MyGuiConstants.CONTROLS_DELTA;
             labelVSync.Position        = controlsOriginLeft; controlsOriginLeft += MyGuiConstants.CONTROLS_DELTA;
             m_checkboxVSync.Position   = controlsOriginRight; controlsOriginRight += MyGuiConstants.CONTROLS_DELTA;
 
@@ -97,12 +103,13 @@ namespace Sandbox.Game.Gui
             Controls.Add(m_labelUnsupportedAspectRatio);
             Controls.Add(m_labelRecommendAspectRatio);
             Controls.Add(labelWindowMode); Controls.Add(m_comboWindowMode);
+            Controls.Add(labelCaptureMouse); Controls.Add(m_checkboxCaptureMouse);
             Controls.Add(labelVSync); Controls.Add(m_checkboxVSync);
 
             foreach (var control in Controls)
                 control.OriginAlign = MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_CENTER;
 
-            m_labelUnsupportedAspectRatio.Text = string.Format("* {0}", MyTexts.Get(MySpaceTexts.UnsupportedAspectRatio));
+            m_labelUnsupportedAspectRatio.Text = string.Format("* {0}", MyTexts.Get(MyCommonTexts.UnsupportedAspectRatio));
 
             { // AddAdaptersToComboBox
                 int counter = 0;
@@ -113,8 +120,8 @@ namespace Sandbox.Game.Gui
             }
 
             // These options show up if there are no supported display modes
-            m_comboWindowMode.AddItem((int)MyWindowModeEnum.Window, MySpaceTexts.ScreenOptionsVideo_WindowMode_Window);
-            m_comboWindowMode.AddItem((int)MyWindowModeEnum.FullscreenWindow, MySpaceTexts.ScreenOptionsVideo_WindowMode_FullscreenWindow);
+            m_comboWindowMode.AddItem((int)MyWindowModeEnum.Window, MyCommonTexts.ScreenOptionsVideo_WindowMode_Window);
+            m_comboWindowMode.AddItem((int)MyWindowModeEnum.FullscreenWindow, MyCommonTexts.ScreenOptionsVideo_WindowMode_FullscreenWindow);
 
             m_comboVideoAdapter.ItemSelected += ComboVideoAdapter_ItemSelected;
             m_comboResolution.ItemSelected += ComboResolution_ItemSelected;
@@ -123,14 +130,14 @@ namespace Sandbox.Game.Gui
             Controls.Add(new MyGuiControlButton(
                 position: Size.Value * new Vector2(-0.5f, 0.5f) + new Vector2(100f, -75f) / MyGuiConstants.GUI_OPTIMAL_SIZE,
                 size: MyGuiConstants.OK_BUTTON_SIZE,
-                text: MyTexts.Get(MySpaceTexts.Ok),
+                text: MyTexts.Get(MyCommonTexts.Ok),
                 onButtonClick: OnOkClick,
                 originAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_BOTTOM));
 
             Controls.Add(new MyGuiControlButton(
                 position: Size.Value * new Vector2(0.5f, 0.5f) + new Vector2(-100f, -75f) / MyGuiConstants.GUI_OPTIMAL_SIZE,
                 size: MyGuiConstants.OK_BUTTON_SIZE,
-                text: MyTexts.Get(MySpaceTexts.Cancel),
+                text: MyTexts.Get(MyCommonTexts.Cancel),
                 onButtonClick: OnCancelClick,
                 originAlign: MyGuiDrawAlignEnum.HORISONTAL_RIGHT_AND_VERTICAL_BOTTOM));
 
@@ -147,15 +154,12 @@ namespace Sandbox.Game.Gui
             CloseButtonOffset = new Vector2(-50f, 50f) / MyGuiConstants.GUI_OPTIMAL_SIZE;
         }
 
-        private void LoadResolutions()
+        private void LoadResolutions(MyAdapterInfo adapter)
         {
             var duplicateFilter = new HashSet<Vector2I>(Vector2I.Comparer);
-            foreach (var adapter in MyVideoSettingsManager.Adapters)
+            foreach (var displayMode in adapter.SupportedDisplayModes)
             {
-                foreach (var displayMode in adapter.SupportedDisplayModes)
-                {
-                    duplicateFilter.Add(new Vector2I(displayMode.Width, displayMode.Height));
-                }
+                duplicateFilter.Add(new Vector2I(displayMode.Width, displayMode.Height));
             }
 
             m_resolutions.Clear();
@@ -178,6 +182,8 @@ namespace Sandbox.Game.Gui
         {
             int adapterIndex = (int)m_comboVideoAdapter.GetSelectedKey();
             { // AddDisplayModesToComboBox
+                LoadResolutions(MyVideoSettingsManager.Adapters[adapterIndex]);
+
                 m_comboResolution.ClearItems();
 
                 var displayAspectRatio = MyVideoSettingsManager.GetRecommendedAspectRatio(adapterIndex);
@@ -207,7 +213,7 @@ namespace Sandbox.Game.Gui
             { // UpdateRecommendecAspectRatioLabel
                 MyAspectRatio recommendedAspectRatio = MyVideoSettingsManager.GetRecommendedAspectRatio(adapterIndex);
                 StringBuilder sb = new StringBuilder();
-                sb.AppendFormat(MyTexts.GetString(MySpaceTexts.RecommendedAspectRatio), recommendedAspectRatio.TextShort);
+                sb.AppendFormat(MyTexts.GetString(MyCommonTexts.RecommendedAspectRatio), recommendedAspectRatio.TextShort);
                 m_labelRecommendAspectRatio.Text = string.Format("*** {0}", sb);
             }
         }
@@ -217,6 +223,7 @@ namespace Sandbox.Game.Gui
             int adapterIndex = (int)m_comboVideoAdapter.GetSelectedKey();
             var selectedResolution = m_resolutions[(int)m_comboResolution.GetSelectedKey()];
             bool fullscreenSupported = false;
+#if !XB1
             foreach (var displayMode in MyVideoSettingsManager.Adapters[adapterIndex].SupportedDisplayModes)
             {
                 if (displayMode.Width == selectedResolution.X &&
@@ -226,13 +233,14 @@ namespace Sandbox.Game.Gui
                     break;
                 }
             }
+#endif
 
             var selectedWindowMode = (MyWindowModeEnum)m_comboWindowMode.GetSelectedKey();
             m_comboWindowMode.ClearItems();
-            m_comboWindowMode.AddItem((int)MyWindowModeEnum.Window, MySpaceTexts.ScreenOptionsVideo_WindowMode_Window);
-            m_comboWindowMode.AddItem((int)MyWindowModeEnum.FullscreenWindow, MySpaceTexts.ScreenOptionsVideo_WindowMode_FullscreenWindow);
+            m_comboWindowMode.AddItem((int)MyWindowModeEnum.Window, MyCommonTexts.ScreenOptionsVideo_WindowMode_Window);
+            m_comboWindowMode.AddItem((int)MyWindowModeEnum.FullscreenWindow, MyCommonTexts.ScreenOptionsVideo_WindowMode_FullscreenWindow);
             if (fullscreenSupported)
-                m_comboWindowMode.AddItem((int)MyWindowModeEnum.Fullscreen, MySpaceTexts.ScreenOptionsVideo_WindowMode_Fullscreen);
+                m_comboWindowMode.AddItem((int)MyWindowModeEnum.Fullscreen, MyCommonTexts.ScreenOptionsVideo_WindowMode_Fullscreen);
 
             if (!fullscreenSupported && selectedWindowMode == MyWindowModeEnum.Fullscreen)
             {
@@ -251,8 +259,11 @@ namespace Sandbox.Game.Gui
 
         private bool ReadSettingsFromControls(ref MyRenderDeviceSettings deviceSettings)
         {
-            bool changed;
-            MyRenderDeviceSettings read = new MyRenderDeviceSettings();
+            bool changed = false;
+            MyRenderDeviceSettings read = new MyRenderDeviceSettings
+                {
+                    AdapterOrdinal = deviceSettings.AdapterOrdinal, // We don't change the value until restarting the game (NewAdapter is loaded from Config)
+                };
 
             var selectedResolution = (int)m_comboResolution.GetSelectedKey();
             if ((uint)selectedResolution < (uint)m_resolutions.Count)
@@ -261,9 +272,19 @@ namespace Sandbox.Game.Gui
                 read.BackBufferWidth = resolution.X;
                 read.BackBufferHeight = resolution.Y;
                 read.WindowMode = (MyWindowModeEnum)m_comboWindowMode.GetSelectedKey();
-                read.AdapterOrdinal = (int)m_comboVideoAdapter.GetSelectedKey();
+
+                read.NewAdapterOrdinal = (int)m_comboVideoAdapter.GetSelectedKey(); // Setting NewAdapter instead of Adapter -- it is saved to config on game end
+                changed |= read.NewAdapterOrdinal != read.AdapterOrdinal; // Notify change of adapter (it is not included in Settings' Equals)
+
                 read.VSync = m_checkboxVSync.IsChecked;
                 read.RefreshRate = 0;
+
+                if (m_checkboxCaptureMouse.IsChecked != MySandboxGame.Config.CaptureMouse)
+                {
+                    MySandboxGame.Config.CaptureMouse = m_checkboxCaptureMouse.IsChecked;
+                    MySandboxGame.Static.UpdateMouseCapture();
+                }
+
                 foreach (var displayMode in MyVideoSettingsManager.Adapters[deviceSettings.AdapterOrdinal].SupportedDisplayModes)
                 { // Pick the highest refresh rate available (although it might be better to add combobox for refresh rates as well)
                     if (displayMode.Width == read.BackBufferWidth &&
@@ -273,12 +294,8 @@ namespace Sandbox.Game.Gui
                         read.RefreshRate = displayMode.RefreshRate;
                     }
                 }
-                changed = !read.Equals(ref deviceSettings);
+                changed = changed || !read.Equals(ref deviceSettings);
                 deviceSettings = read;
-            }
-            else
-            { // unsupported display mode selected, so pretend nothing was changed
-                changed = false;
             }
 
             return changed;
@@ -286,11 +303,13 @@ namespace Sandbox.Game.Gui
 
         private void WriteSettingsToControls(MyRenderDeviceSettings deviceSettings)
         {
-            m_comboVideoAdapter.SelectItemByKey(deviceSettings.AdapterOrdinal);
+            m_comboVideoAdapter.SelectItemByKey(deviceSettings.NewAdapterOrdinal);
             m_comboResolution.SelectItemByKey(m_resolutions.FindIndex(
                 (res) => res.X == deviceSettings.BackBufferWidth && res.Y == deviceSettings.BackBufferHeight));
             m_comboWindowMode.SelectItemByKey((int)deviceSettings.WindowMode);
             m_checkboxVSync.IsChecked = deviceSettings.VSync;
+
+            m_checkboxCaptureMouse.IsChecked = MySandboxGame.Config.CaptureMouse;
         }
 
         public void OnCancelClick(MyGuiControlButton sender)
@@ -303,6 +322,7 @@ namespace Sandbox.Game.Gui
         {
             //  Update NEW settings
             bool somethingChanged = ReadSettingsFromControls(ref m_settingsNew);
+
 
             //  Change video mode to new one
             if (somethingChanged)
@@ -321,10 +341,11 @@ namespace Sandbox.Game.Gui
             {
                 case MyVideoSettingsManager.ChangeResult.Success:
                     m_waitingForConfirmation = true;
+
                     MyGuiSandbox.AddScreen(MyGuiSandbox.CreateMessageBox(
                         buttonType: MyMessageBoxButtonsType.YES_NO_TIMEOUT,
-                        messageText: MyTexts.Get(MySpaceTexts.DoYouWantToKeepTheseSettingsXSecondsRemaining),
-                        messageCaption: MyTexts.Get(MySpaceTexts.MessageBoxCaptionPleaseConfirm),
+                        messageCaption: MyTexts.Get(MyCommonTexts.MessageBoxCaptionPleaseConfirm),
+                        messageText: MyTexts.Get(MyCommonTexts.DoYouWantToKeepTheseSettingsXSecondsRemaining),
                         callback: OnMessageBoxCallback,
                         timeoutInMiliseconds: MyGuiConstants.VIDEO_OPTIONS_CONFIRMATION_TIMEOUT_IN_MILISECONDS));
                     break;
@@ -335,8 +356,8 @@ namespace Sandbox.Game.Gui
                 case MyVideoSettingsManager.ChangeResult.Failed:
                     m_doRevert = true;
                     MyGuiSandbox.AddScreen(MyGuiSandbox.CreateMessageBox(
-                        messageText: MyTexts.Get(MySpaceTexts.SorryButSelectedSettingsAreNotSupportedByYourHardware),
-                        messageCaption: MyTexts.Get(MySpaceTexts.MessageBoxCaptionError)));
+                        messageText: MyTexts.Get(MyCommonTexts.SorryButSelectedSettingsAreNotSupportedByYourHardware),
+                        messageCaption: MyTexts.Get(MyCommonTexts.MessageBoxCaptionError)));
                     break;
             }
         }
@@ -356,8 +377,16 @@ namespace Sandbox.Game.Gui
 
                 //  These are now OLD settings
                 ReadSettingsFromControls(ref m_settingsOld);
-
                 this.CloseScreenNow();
+
+                if (m_settingsNew.NewAdapterOrdinal != m_settingsNew.AdapterOrdinal)
+                {
+                    MyGuiSandbox.AddScreen(MyGuiSandbox.CreateMessageBox(
+                        buttonType: MyMessageBoxButtonsType.YES_NO,
+                        messageCaption: MyTexts.Get(MyCommonTexts.MessageBoxCaptionWarning),
+                        messageText: MyTexts.Get(MyCommonTexts.MessageBoxTextRestartNeededAfterAdapterSwitch),
+                        callback: OnMessageBoxAdapterChangeCallback));
+                }
             }
             else
             {
@@ -365,6 +394,12 @@ namespace Sandbox.Game.Gui
             }
 
             m_waitingForConfirmation = false;
+        }
+
+        public void OnMessageBoxAdapterChangeCallback(MyGuiScreenMessageBox.ResultEnum callbackReturn)
+        {
+            if (callbackReturn == MyGuiScreenMessageBox.ResultEnum.YES)
+                MySessionLoader.ExitGame();
         }
 
         public override bool CloseScreen()

@@ -14,10 +14,12 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using VRage;
-using VRage.Components;
+using VRage.Game.Components;
+using VRage.Game.Entity;
 using VRage.Utils;
 using VRageMath;
 using VRageRender;
+using VRageRender.Utils;
 
 #endregion
 
@@ -357,16 +359,19 @@ namespace Sandbox.Game.GameSystems.StructuralIntegrity
                                 continue;
                         }
 
+                        Vector3I pos = block.Min;
+                        float volumeRecip = 1.0f / block.BlockDefinition.Size.Size;
+                        for (var it = new Vector3I_RangeIterator(ref block.Min, ref block.Max); it.IsValid(); it.GetNext(out pos))
+                        {
+                            var node = new Node(pos, false);
 
+                            node.Mass = cubeMass * volumeRecip;
 
-                        var node = new Node(block.Position, false);
-                 
-                        node.Mass = cubeMass;
+                            node.PhysicalMaterial = physicalMaterial;
 
-                        node.PhysicalMaterial = physicalMaterial;
-
-                        simData.DynamicBlocks.Add(node);
-                        simData.All.Add(block.Position, node);
+                            simData.DynamicBlocks.Add(node);
+                            simData.All.Add(pos, node);
+                        }
                     }
                 }
 

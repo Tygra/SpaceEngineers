@@ -1,6 +1,4 @@
-﻿using Sandbox.Common;
-using Sandbox.Common.ObjectBuilders;
-using Sandbox.Engine.Utils;
+﻿using Sandbox.Engine.Utils;
 using Sandbox.Game.Entities;
 using Sandbox.Game.Gui;
 using Sandbox.Game.GUI;
@@ -10,10 +8,13 @@ using System;
 using System.Diagnostics;
 using System.Text;
 using VRage;
+using VRage.Game;
+using VRage.Game.Components;
 using VRage.Input;
-using VRage.Library.Utils;
 using VRage.Utils;
-using VRage.Utils;
+using VRage.Audio;
+using VRage.Profiler;
+using VRageRender.Utils;
 
 namespace Sandbox.Game.Screens.Helpers
 {
@@ -88,7 +89,7 @@ namespace Sandbox.Game.Screens.Helpers
         {
             get
             {
-                return m_instance.m_universalCharacterToolbar;
+                return m_instance != null ? m_instance.m_universalCharacterToolbar : null;
             }
         }
 
@@ -96,17 +97,10 @@ namespace Sandbox.Game.Screens.Helpers
         {
             if (!AutoUpdate)
                 return;
-            var shipController = MySession.ControlledEntity as MyShipController;
 
-            if (shipController == null && m_instance.m_currentToolbar != m_instance.m_universalCharacterToolbar)
+            if (MySession.Static.ControlledEntity != null && MySession.Static.ControlledEntity.Toolbar != null && m_instance.m_currentToolbar != MySession.Static.ControlledEntity.Toolbar)
             {
-                m_instance.m_currentToolbar = m_instance.m_universalCharacterToolbar;
-                if (CurrentToolbarChanged != null)
-                    CurrentToolbarChanged();
-            }
-            else if (shipController != null && m_instance.m_currentToolbar != shipController.Toolbar)
-            {
-                m_instance.m_currentToolbar = shipController.Toolbar;
+                m_instance.m_currentToolbar = MySession.Static.ControlledEntity.Toolbar;
                 if (CurrentToolbarChanged != null)
                     CurrentToolbarChanged();
             }
@@ -120,7 +114,7 @@ namespace Sandbox.Game.Screens.Helpers
                 {
                     Debug.Assert(MyGuiScreenGamePlay.Static != null && MySpectatorCameraController.Static != null, "There must be valid gameplay and spectator at this point!");
                 }
-                return MySession.IsCameraUserControlledSpectator() && MyInput.Static.ENABLE_DEVELOPER_KEYS;
+                return MySession.Static.IsCameraUserControlledSpectator() && MyInput.Static.ENABLE_DEVELOPER_KEYS;
             }
         }
 
@@ -156,20 +150,20 @@ namespace Sandbox.Game.Screens.Helpers
             ProfilerShort.Begin("MyToolbarComponent.HandleInput");
             try
             {
-                var context = MySession.ControlledEntity != null ? MySession.ControlledEntity.ControlContext : MyStringId.NullOrEmpty;
+                var context = MySession.Static.ControlledEntity != null ? MySession.Static.ControlledEntity.ControlContext : MyStringId.NullOrEmpty;
                 var focusedScreen = MyScreenManager.GetScreenWithFocus();
                 if ((focusedScreen == MyGuiScreenGamePlay.Static ||
                     IsToolbarControlShown ) &&
-                    CurrentToolbar != null)
+                    CurrentToolbar != null && !MyGuiScreenGamePlay.DisableInput)
                 {
                     {
                         for (int i = 0; i < m_slotControls.Length; i++)
                         {
                             if (MyControllerHelper.IsControl(context, m_slotControls[i], MyControlStateType.NEW_PRESSED))
                             {
-                                if (!MyInput.Static.IsAnyShiftKeyPressed())
+                                if (!MyInput.Static.IsAnyCtrlKeyPressed())
                                 {
-                                    if ((focusedScreen == MyGuiScreenGamePlay.Static ||
+                                    if ((focusedScreen is MyGuiScreenScriptingTools|| focusedScreen == MyGuiScreenGamePlay.Static ||
                                             (focusedScreen is MyGuiScreenCubeBuilder || focusedScreen is MyGuiScreenToolbarConfigBase) && ((MyGuiScreenToolbarConfigBase)focusedScreen).AllowToolbarKeys()) &&
                                             CurrentToolbar != null)
                                         CurrentToolbar.ActivateItemAtSlot(i);
@@ -182,25 +176,28 @@ namespace Sandbox.Game.Screens.Helpers
                             }
                         }
                     }
+
                     if ((focusedScreen == MyGuiScreenGamePlay.Static ||
                                 (focusedScreen is MyGuiScreenCubeBuilder || focusedScreen is MyGuiScreenToolbarConfigBase) && ((MyGuiScreenToolbarConfigBase)focusedScreen).AllowToolbarKeys()) &&
                                 CurrentToolbar != null)
-                        {
-                        if (MyControllerHelper.IsControl(context, MyControlsSpace.TOOLBAR_UP, MyControlStateType.NEW_PRESSED))
-                        {
-                            MyGuiAudio.PlaySound(MyGuiSounds.HudClick);
-                            CurrentToolbar.PageUp();
-                        }
-                        if (MyControllerHelper.IsControl(context, MyControlsSpace.TOOLBAR_DOWN, MyControlStateType.NEW_PRESSED))
-                        {
-                            MyGuiAudio.PlaySound(MyGuiSounds.HudClick);
-                            CurrentToolbar.PageDown();
-                        }
-
+                    {
                         if (MyControllerHelper.IsControl(context, MyControlsSpace.TOOLBAR_NEXT_ITEM, MyControlStateType.NEW_PRESSED))
                             CurrentToolbar.SelectNextSlot();
                         else if (MyControllerHelper.IsControl(context, MyControlsSpace.TOOLBAR_PREV_ITEM, MyControlStateType.NEW_PRESSED))
                             CurrentToolbar.SelectPreviousSlot();
+                        if (MySpectator.Static.SpectatorCameraMovement != MySpectatorCameraMovementEnum.ConstantDelta)
+                        {
+                            if (MyControllerHelper.IsControl(context, MyControlsSpace.TOOLBAR_UP, MyControlStateType.NEW_PRESSED))
+                            {
+                                MyGuiAudio.PlaySound(MyGuiSounds.HudClick);
+                                CurrentToolbar.PageUp();
+                            }
+                            if (MyControllerHelper.IsControl(context, MyControlsSpace.TOOLBAR_DOWN, MyControlStateType.NEW_PRESSED))
+                            {
+                                MyGuiAudio.PlaySound(MyGuiSounds.HudClick);
+                                CurrentToolbar.PageDown();
+                            }
+                        }
                     }
                 }
             }
@@ -289,7 +286,7 @@ namespace Sandbox.Game.Screens.Helpers
                 return MyToolbarType.Spectator;
             }
 
-            return MySession.ControlledEntity != null ? MySession.ControlledEntity.ToolbarType : MyToolbarType.Spectator;
+            return MySession.Static.ControlledEntity != null ? MySession.Static.ControlledEntity.ToolbarType : MyToolbarType.Spectator;
         }
 
         public static bool AutoUpdate { get; set; }

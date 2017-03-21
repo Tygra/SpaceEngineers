@@ -8,6 +8,7 @@ using Sandbox.Common.ObjectBuilders;
 
 using Sandbox.Engine.Utils;
 using VRage;
+using VRage.Game;
 using VRage.Utils;
 using VRage.Library.Utils;
 using VRage.ObjectBuilders;
@@ -86,6 +87,13 @@ namespace Sandbox.Game
             m_constrainedTypes.Remove(type);
             UpdateIcon();
             return this;
+        }
+
+        public void Clear()
+        {
+            m_constrainedIds.Clear();
+            m_constrainedTypes.Clear();
+            UpdateIcon();
         }
 
         public bool Check(MyDefinitionId checkedId)

@@ -1,12 +1,11 @@
-﻿using Sandbox.Common.ObjectBuilders.Voxels;
-using Sandbox.Engine.Voxels;
+﻿using Sandbox.Engine.Voxels;
 using Sandbox.Game.Components;
 using System.Collections.Generic;
 using System.Diagnostics;
 using VRage;
 using VRage.Collections;
+using VRage.Profiler;
 using VRage.Utils;
-using VRage.Voxels;
 using VRageMath;
 
 namespace Sandbox.Game.Entities
@@ -24,6 +23,8 @@ namespace Sandbox.Game.Entities
         {
             foreach (var entry in m_voxelMapsByEntityId)
                 entry.Value.Close();
+
+            MyStorageBase.ResetCache();
 
             m_voxelMapsByEntityId.Clear();
             m_renderComponentsByClipmapId.Clear();
@@ -71,11 +72,9 @@ namespace Sandbox.Game.Entities
             return ret;
         }
 
-        public List<MyVoxelBase> GetAllOverlappingWithSphere(ref BoundingSphereD sphere)
+        public void GetAllOverlappingWithSphere(ref BoundingSphereD sphere, List<MyVoxelBase> voxels)
         {
-            List<MyVoxelBase> voxels = new List<MyVoxelBase>();
             MyGamePruningStructure.GetAllVoxelMapsInSphere(ref sphere, voxels);
-            return voxels;
         }
 
         public void Add(MyVoxelBase voxelMap)
@@ -119,6 +118,17 @@ namespace Sandbox.Game.Entities
             return null;
         }
 
+        public MyVoxelBase TryGetVoxelMapByNameStart(string name)
+        {
+            foreach (var voxelMap in m_voxelMapsByEntityId.Values)
+            {
+                if (voxelMap.StorageName != null && voxelMap.StorageName.StartsWith(name))
+                    return voxelMap;
+            }
+
+            return null;
+        }
+
         public MyVoxelBase TryGetVoxelMapByName(string name)
         {
             foreach (var voxelMap in m_voxelMapsByEntityId.Values)
@@ -130,7 +140,7 @@ namespace Sandbox.Game.Entities
             return null;
         }
 
-        public Dictionary<string, byte[]> GetVoxelMapsArray()
+        public Dictionary<string, byte[]> GetVoxelMapsArray(bool includeChanged)
         {
             ProfilerShort.Begin("GetVoxelMapsArray");
 
@@ -139,6 +149,11 @@ namespace Sandbox.Game.Entities
             byte[] compressedData;
             foreach (var voxelMap in m_voxelMapsByEntityId.Values)
             {
+                if (includeChanged == false && (voxelMap.ContentChanged || voxelMap.BeforeContentChanged))
+                {
+                    continue;
+                }
+
                 if (voxelMap.Save == false)
                     continue;
 

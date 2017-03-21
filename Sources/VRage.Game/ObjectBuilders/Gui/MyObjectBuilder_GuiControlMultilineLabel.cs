@@ -1,9 +1,8 @@
 ﻿using ProtoBuf;
-using System;
 using VRageMath;
 using VRage.ObjectBuilders;
 
-namespace Sandbox.Common.ObjectBuilders.Gui
+namespace VRage.Game
 {
     [ProtoContract]
     [MyObjectBuilderDefinition]
@@ -25,6 +24,6 @@ namespace Sandbox.Common.ObjectBuilders.Gui
         public int TextBoxAlign;
 
         [ProtoMember]
-        public MyFontEnum Font;
+        public string Font;
     }
 }

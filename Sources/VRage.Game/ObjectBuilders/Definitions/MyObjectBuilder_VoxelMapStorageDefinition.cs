@@ -1,13 +1,9 @@
 ﻿using ProtoBuf;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using VRage.Voxels;
 using VRage.Data;
 using VRage.ObjectBuilders;
+using VRage.Voxels;
 
-namespace Sandbox.Common.ObjectBuilders.Definitions
+namespace VRage.Game
 {
     [ProtoContract]
     [MyObjectBuilderDefinition]

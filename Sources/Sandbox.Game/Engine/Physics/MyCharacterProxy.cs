@@ -19,6 +19,8 @@ using Havok;
 using Sandbox.Game.Entities.Cube;
 using Sandbox.Common;
 using Sandbox.Game;
+using Sandbox.Game.Multiplayer;
+using Sandbox.Game.Entities.Character;
 
 #endregion
 
@@ -40,6 +42,7 @@ namespace Sandbox.Engine.Physics
 
         Vector3 m_forward;
         float m_speed = 0;
+        float m_maxSpeedRelativeToShip = 7.0f; //Defualt MaxSprintSpeed
 
         int m_airFrameCounter = 0;
         float m_mass = 0;
@@ -97,12 +100,13 @@ namespace Sandbox.Engine.Physics
         public MyCharacterProxy(bool isDynamic, bool isCapsule, float characterWidth, float characterHeight,
             float crouchHeight, float ladderHeight, float headSize, float headHeight,
             Vector3 position, Vector3 up, Vector3 forward,
-            float mass, MyPhysicsBody body, bool isOnlyVertical, float maxSlope, float maxImpulse, HkRagdoll ragDoll = null)
+            float mass, MyPhysicsBody body, bool isOnlyVertical, float maxSlope, float maxImpulse, float maxSpeedRelativeToShip, float? maxForce = null, HkRagdoll ragDoll = null)
         {
             m_isDynamic = isDynamic;
             m_physicsBody = body;
             m_mass =  mass;
             m_maxImpulse = maxImpulse;
+            m_maxSpeedRelativeToShip = maxSpeedRelativeToShip;
 
             if (isCapsule)
             {
@@ -111,13 +115,13 @@ namespace Sandbox.Engine.Physics
                 m_crouchShape = CreateCharacterShape(characterHeight, characterWidth, characterHeight + headHeight, headSize, 0.0f, 1.0f);
 
                 if (!m_isDynamic)
-                    CharacterPhantom = new HkSimpleShapePhantom(m_characterShape, MyPhysics.CharacterCollisionLayer);
+                    CharacterPhantom = new HkSimpleShapePhantom(m_characterShape, MyPhysics.CollisionLayers.CharacterCollisionLayer);
             }
             else
             {
                 HkBoxShape box = new HkBoxShape(new Vector3(characterWidth / 2.0f, characterHeight / 2.0f, characterWidth / 2.0f));
                 if (!m_isDynamic)
-                    CharacterPhantom = new HkSimpleShapePhantom((HkShape)box, MyPhysics.CharacterCollisionLayer);
+                    CharacterPhantom = new HkSimpleShapePhantom((HkShape)box, MyPhysics.CollisionLayers.CharacterCollisionLayer);
                 m_characterShape = box;
             }
 
@@ -153,17 +157,18 @@ namespace Sandbox.Engine.Physics
                 characterRBCInfo.MaxSlope = MathHelper.ToRadians(maxSlope);
                 characterRBCInfo.Up = up;
                 characterRBCInfo.Mass = mass;
-                characterRBCInfo.CollisionFilterInfo = MyPhysics.CharacterCollisionLayer;
+                characterRBCInfo.CollisionFilterInfo = MyPhysics.CollisionLayers.CharacterCollisionLayer;
                 //characterRBCInfo.UnweldingHeightOffsetFactor = 100;
                 characterRBCInfo.MaxLinearVelocity = 1000000;
-                characterRBCInfo.MaxForce = 100000;
-                characterRBCInfo.AllowedPenetrationDepth = 0.1f;
+                characterRBCInfo.MaxForce = maxForce.HasValue ? maxForce.Value : 100000;
+                characterRBCInfo.AllowedPenetrationDepth = MyFakes.ENABLE_LIMITED_CHARACTER_BODY ? 0.3f : 0.1f;
                 characterRBCInfo.JumpHeight = 0.8f;
 
-
-                CharacterRigidBody = new HkCharacterRigidBody(characterRBCInfo, MyGridPhysics.ShipMaxLinearVelocity(), body, isOnlyVertical);
+                float maxCharacterSpeed = MyGridPhysics.ShipMaxLinearVelocity() + m_maxSpeedRelativeToShip;
+                CharacterRigidBody = new HkCharacterRigidBody(characterRBCInfo, maxCharacterSpeed, body, isOnlyVertical);
 
                 CharacterRigidBody.GetRigidBody().ContactPointCallbackEnabled = true;
+                CharacterRigidBody.GetRigidBody().ContactPointCallback -= RigidBody_ContactPointCallback;
                 CharacterRigidBody.GetRigidBody().ContactPointCallback += RigidBody_ContactPointCallback;
                 CharacterRigidBody.GetRigidBody().ContactPointCallbackDelay = 0;
 
@@ -201,6 +206,10 @@ namespace Sandbox.Engine.Physics
 
             if (CharacterRigidBody != null)
             {
+                if (CharacterRigidBody.GetRigidBody() != null)
+                {
+                    CharacterRigidBody.GetRigidBody().ContactPointCallback -= RigidBody_ContactPointCallback;
+                }
                 CharacterRigidBody.Dispose();
                 CharacterRigidBody = null;
             }
@@ -211,6 +220,13 @@ namespace Sandbox.Engine.Physics
         }
 
         #endregion
+
+        public void SetCollisionFilterInfo(uint info)
+        {
+            if (m_isDynamic)
+                CharacterRigidBody.SetCollisionFilterInfo(info);
+        }
+        
 
         #region Activation
 
@@ -326,6 +342,18 @@ namespace Sandbox.Engine.Physics
             }
             else
                 return CharacterProxy.GetState();
+        }
+
+        public void SetState(HkCharacterStateType state)
+        {
+            if (m_isDynamic)
+            {
+                CharacterRigidBody.SetState(state);
+            }
+            else
+            {
+                CharacterProxy.SetState(state);
+            }
         }
 
        
@@ -473,12 +501,15 @@ namespace Sandbox.Engine.Physics
             set
             {
                 m_angularVelocity = value;
-                CharacterRigidBody.AngularVelocity = m_angularVelocity; 
-                CharacterRigidBody.SetAngularVelocity(m_angularVelocity);
+                if (CharacterRigidBody != null)
+                {
+                    CharacterRigidBody.AngularVelocity = m_angularVelocity;
+                    CharacterRigidBody.SetAngularVelocity(m_angularVelocity);
+                }
             }
             get
             {
-                return CharacterRigidBody.GetAngularVelocity();
+                return CharacterRigidBody != null ? CharacterRigidBody.GetAngularVelocity() : m_angularVelocity;
             }
         }
 
@@ -523,9 +554,73 @@ namespace Sandbox.Engine.Physics
                 Supported = CharacterRigidBody.Supported;
                 SupportNormal = CharacterRigidBody.SupportNormal;
                 GroundVelocity = CharacterRigidBody.GroundVelocity;
+
+                if(false)
+                {
+                    // Coordinate system
+                    Matrix worldMatrix = GetPhysicsBody().GetWorldMatrix();
+                    Vector3 Side = CharacterRigidBody.Up.Cross(CharacterRigidBody.Forward);
+                    //MyPhysicsDebugDraw.DebugDrawCoordinateSystem(worldMatrix.Translation, CharacterRigidBody.Forward, Side, CharacterRigidBody.Up);
+
+                    //BoundingBoxD 
+                    //MyPhysicsDebugDraw.DebugDrawAabb(worldMatrix.Translation,Color.LightBlue);
+
+                    //Velocity and Acceleration
+                    MyPhysicsDebugDraw.DebugDrawVector3(worldMatrix.Translation, CharacterRigidBody.LinearVelocity, Color.Red, 1.0f);
+                    //MyPhysicsDebugDraw.DebugDrawVector3(worldMatrix.Translation, CharacterRigidBody.LinearAcceleration, Color.Blue, 1.0f);
+
+                    // Gravity
+                    MyPhysicsDebugDraw.DebugDrawVector3(worldMatrix.Translation, CharacterRigidBody.Gravity, Color.Yellow, 0.1f);
+
+                    // Controller Up
+                    //MyPhysicsDebugDraw.DebugDrawVector3(worldMatrix.Translation, CharacterRigidBody.GetControllerUp(), Color.Pink, 1.0f);
+                    MyPhysicsDebugDraw.DebugDrawVector3(worldMatrix.Translation, CharacterRigidBody.Up, Color.Pink, 1.0f);
+
+                    Vector3 TestUp = Vector3.Up;
+                    MyPhysicsDebugDraw.DebugDrawVector3(worldMatrix.Translation, TestUp, Color.Green, 1.0f);
+
+                    /*
+                    // Capsule Shape draw 
+                    float radius = 0.4f;
+                    Vector3 vertexA = Vector3.Zero;
+                    Vector3 vertexB = Vector3.Zero;
+                    CharacterRigidBody.GetPxCapsuleShapeDrawData(ref radius,ref vertexA,ref vertexB);
+                    if ((vertexA != vertexB) && (radius > 0.0f))
+                    {
+                        HkShape capsuleShape = new HkCapsuleShape(vertexA, vertexB, radius); // only for debug display
+
+                        int index = 0;
+                        const float alpha = 0.3f;
+                        MyPhysicsDebugDraw.DrawCollisionShape(capsuleShape, worldMatrix, alpha, ref index);
+                    }
+                    */
+                }
             }           
         }
 
+        public void UpdateSupport(float stepSizeInSeconds)
+        {
+            if (CharacterRigidBody != null)
+            {
+                CharacterRigidBody.UpdateSupport(stepSizeInSeconds);
+                Supported = CharacterRigidBody.Supported;
+                SupportNormal = CharacterRigidBody.SupportNormal;
+                GroundVelocity = CharacterRigidBody.GroundVelocity;
+            }
+        }
+
+        public void SkipSimulation(MatrixD mat)
+        {
+            if (CharacterRigidBody != null)
+            {
+                CharacterRigidBody.Position = mat.Translation;
+                CharacterRigidBody.Forward = mat.Forward;
+                CharacterRigidBody.Up = mat.Up;
+                Supported = CharacterRigidBody.Supported;
+                SupportNormal = CharacterRigidBody.SupportNormal;
+                GroundVelocity = CharacterRigidBody.GroundVelocity;
+            }
+        }
 
         bool m_flyingStateEnabled = false;
         private HkRigidBody m_oldRigidBody;
@@ -533,7 +628,10 @@ namespace Sandbox.Engine.Physics
         public void EnableFlyingState(bool enable)
         {
             //multiply by constant because walking on max moving ship
-            EnableFlyingState(enable, MyGridPhysics.CharacterWalkingMaxLinearVelocity(),  MyGridPhysics.CharacterFlyingMaxLinearVelocity(), 9);
+            float maxCharacterWalkingSpeed = MyGridPhysics.ShipMaxLinearVelocity() + m_maxSpeedRelativeToShip;
+            float maxCharacterFlyingSpeed = MyGridPhysics.ShipMaxLinearVelocity() + m_maxSpeedRelativeToShip;
+            float maxAcceleration = 9; // why
+            EnableFlyingState(enable, maxCharacterWalkingSpeed, maxCharacterFlyingSpeed, maxAcceleration);           
         }
 
         public void EnableFlyingState(bool enable, float maxCharacterSpeed, float maxFlyingSpeed, float maxAcceleration)
@@ -546,7 +644,7 @@ namespace Sandbox.Engine.Physics
                 }
 
                 // To allow astronaut fly freely in deep space (otherwise he stops in up direction)
-                StepSimulation(MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS);
+                StepSimulation(VRage.Game.MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS);
 
                 m_flyingStateEnabled = enable;
             }
@@ -605,6 +703,12 @@ namespace Sandbox.Engine.Physics
             {
                 CharacterRigidBody.ApplyAngularImpulse(impulse);
             }
+        }
+
+        // Apply gravity as linear velocity to character proxy only
+        public void ApplyGravity(Vector3 gravity)
+        {
+            CharacterRigidBody.LinearVelocity += (gravity * VRage.Game.MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS); 
         }
       
         public bool ImmediateSetWorldTransform
@@ -666,6 +770,15 @@ namespace Sandbox.Engine.Physics
             }
         }
 
+        public MyPhysicsBody GetPhysicsBody()
+        {
+            if (m_physicsBody != null)
+            {
+                return m_physicsBody;
+            }
+            return null;
+        }
+
         public HkEntity GetRigidBody()
         {
             if (CharacterRigidBody != null)
@@ -696,6 +809,21 @@ namespace Sandbox.Engine.Physics
         public float Mass
         {
             get { return m_mass; }
+        }
+
+        public float MaxSpeedRelativeToShip
+        {
+            get { return m_maxSpeedRelativeToShip; }
+        }
+
+        public float CharacterFlyingMaxLinearVelocity()
+        {
+            return m_maxSpeedRelativeToShip + MyGridPhysics.ShipMaxLinearVelocity(); 
+        }
+
+        public float CharacterWalkingMaxLinearVelocity()
+        {
+            return m_maxSpeedRelativeToShip + MyGridPhysics.ShipMaxLinearVelocity(); 
         }
 
     }

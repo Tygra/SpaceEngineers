@@ -2,7 +2,6 @@
 
 using Havok;
 using Sandbox.Common;
-using Sandbox.Common.ModAPI;
 using Sandbox.Common.ObjectBuilders;
 using Sandbox.Common.ObjectBuilders.Definitions;
 using Sandbox.Definitions;
@@ -25,7 +24,6 @@ using Sandbox.Game.SessionComponents;
 using Sandbox.Game.Weapons;
 using Sandbox.Game.World;
 using Sandbox.Graphics.GUI;
-using Sandbox.Graphics.TransparentGeometry.Particles;
 using Sandbox.ModAPI;
 using Sandbox.ModAPI.Interfaces;
 using System;
@@ -35,8 +33,10 @@ using System.Linq;
 using System.Text;
 using VRage;
 using VRage.Audio;
-using VRage.Components;
+using VRage.Game.Components;
 using VRage.FileSystem;
+using VRage.Game;
+using VRage.Game.Entity;
 using VRage.Game.Entity.UseObject;
 using VRage.Game.ObjectBuilders;
 using VRage.Input;
@@ -46,7 +46,10 @@ using VRage.ObjectBuilders;
 using VRage.Utils;
 using VRageMath;
 using VRageRender;
-using IMyModdingControllableEntity = Sandbox.ModAPI.Interfaces.IMyControllableEntity;
+using IMyModdingControllableEntity = VRage.Game.ModAPI.Interfaces.IMyControllableEntity;
+using VRage.Import;
+using VRage.Game.Models;
+using VRage.Profiler;
 
 #endregion
 
@@ -54,12 +57,13 @@ namespace Sandbox.Game.Entities.Character
 {
     public class MyCharacterRaycastDetectorComponent : MyCharacterDetectorComponent
     {
-        List<MyPhysics.HitInfo> m_hits = new List<MyPhysics.HitInfo>();
+        private readonly List<MyUseObjectsComponentBase> m_hitUseComponents = new List<MyUseObjectsComponentBase>();
 
         protected override void DoDetection(bool useHead)
         {
-            if (Character == MySession.ControlledEntity)
-                MyHud.SelectedObjectHighlight.Visible = false;
+            ProfilerShort.Begin("DoDetection");
+            if (Character == MySession.Static.ControlledEntity)
+                MyHud.SelectedObjectHighlight.RemoveHighlight();
 
             var head = Character.GetHeadMatrix(false);
             var headPos = head.Translation - (Vector3D)head.Forward * 0.3; // Move to center of head, we don't want eyes (in front of head)
@@ -82,69 +86,101 @@ namespace Sandbox.Game.Entities.Character
             }
 
             Vector3D to = from + dir * MyConstants.DEFAULT_INTERACTIVE_DISTANCE;
-
-            EnableDetectorsInArea(from);
-            //VRageRender.MyRenderProxy.DebugDrawLine3D(from, to, Color.Red, Color.Green, true);
-            //VRageRender.MyRenderProxy.DebugDrawSphere(headPos, 0.05f, Color.Red.ToVector3(), 1.0f, false);
-
             StartPosition = from;
+            LineD intersectionLine = new LineD(from, to);
 
-            MyPhysics.CastRay(from, to, m_hits);
-
-            bool hasInteractive = false;
-
-            int index = 0;
-            while (index < m_hits.Count && (m_hits[index].HkHitInfo.Body == null || m_hits[index].HkHitInfo.GetHitEntity() == Character
-                || m_hits[index].HkHitInfo.Body.HasProperty(HkCharacterRigidBody.MANIPULATED_OBJECT))) // Skip invalid hits and self character
+            // Processing of hit entities 
+            var geometryHit = MyEntities.GetIntersectionWithLine(ref intersectionLine, null, null, ignoreFloatingObjects: false);
+            bool hasUseObject = false;
+            if (geometryHit.HasValue)
             {
-                index++;
-            }
+                var hitEntity = geometryHit.Value.Entity;
 
-            if (index < m_hits.Count)
-            {
-                //We must take only closest hit (others are hidden behind)
-                var h = m_hits[index];
-                var entity = h.HkHitInfo.GetHitEntity();
-                var interactive = entity as IMyUseObject;
-
-                // TODO: Uncomment to enforce that character must face object by front to activate it
-                //if (TestInteractionDirection(head.Forward, h.Position - GetPosition()))
-                //return;
-                DetectedEntity = entity;
-                if (entity != null)
+                // Cube Grids are special case
+                var cubeGrid = hitEntity as MyCubeGrid;
+                if (cubeGrid != null)
                 {
-                    ShapeKey = h.HkHitInfo.GetShapeKey(0);
-
-                    MyUseObjectsComponentBase useObject = null;
-                    
-                    entity.Components.TryGet<MyUseObjectsComponentBase>(out useObject);
-                    if (useObject != null)
+                    // For hit cube grids get the fat hit fatblock instead.
+                    var slimBlock = cubeGrid.GetTargetedBlock(geometryHit.Value.IntersectionPointInWorldSpace);
+                    if (slimBlock != null && slimBlock.FatBlock != null)
                     {
-                        interactive = useObject.GetInteractiveObject(ShapeKey);
+                        hitEntity = slimBlock.FatBlock;
+                    }
+                }
+
+                m_hitUseComponents.Clear();
+                var hitUseObject = hitEntity as IMyUseObject;
+                // Retrive all above use components from parent structure. (Because of subParts)
+                GetUseComponentsFromParentStructure(hitEntity, m_hitUseComponents);
+                // Check for UseObjects and entities with UseObjectComponentBase.
+                // Assuming that entity cannot be IMyUseObject and have UseObjectComponentBase in hierarchy
+                // at the same time.
+                if(hitUseObject != null || m_hitUseComponents.Count > 0)
+                {
+                    if (m_hitUseComponents.Count > 0)
+                    {
+                        // Process the valid hit entity
+                        var closestDetectorDistance = float.MaxValue;
+                        double physicalHitDistance = Vector3D.Distance(from, geometryHit.Value.IntersectionPointInWorldSpace);
+                        MyUseObjectsComponentBase hitUseComp = null;
+                        // Evaluate the set of found detectors and try to find the closest one
+                        foreach (var hitUseComponent in m_hitUseComponents)
+                        {
+                            float detectorDistance;
+                            var interactive = hitUseComponent.RaycastDetectors(from, to, out detectorDistance);
+                            detectorDistance *= MyConstants.DEFAULT_INTERACTIVE_DISTANCE;
+                            if (Math.Abs(detectorDistance) < Math.Abs(closestDetectorDistance) 
+                                && (detectorDistance < physicalHitDistance)) // Remove to fix the problem with picking through physic bodies,
+                            {                                           // but will introduce new problem with detectors inside physic bodies.
+                                closestDetectorDistance = detectorDistance;
+                                hitUseComp = hitUseComponent;
+                                hitEntity = hitUseComponent.Entity;
+                                hitUseObject = interactive;
+                            }
+                        }
+
+                        // Detector found
+                        if (hitUseComp != null)
+                        {
+                            // Process successful hit with results
+                            var detectorPhysics = hitUseComp.DetectorPhysics;
+                            HitMaterial = detectorPhysics.GetMaterialAt(HitPosition);
+                            HitBody = geometryHit.Value.Entity.Physics.RigidBody;
+                            HitPosition = geometryHit.Value.IntersectionPointInWorldSpace;
+                            DetectedEntity = hitEntity;
+                        }
+                    } 
+                    else
+                    {
+                        // Case for hitting IMyUseObject already before even looking for UseComponent.
+                        // Floating object case.
+                        HitMaterial = hitEntity.Physics.GetMaterialAt(HitPosition);
+                        HitBody = hitEntity.Physics.RigidBody;
                     }
 
-                    HitPosition = h.Position;
-                    HitNormal = h.HkHitInfo.Normal;
-                    HitMaterial = h.HkHitInfo.Body.GetBody().GetMaterialAt(HitPosition + HitNormal * 0.1f);
-                    HitBody = h.HkHitInfo.Body;
-                }
+                    // General logic for processing both cases.
+                    if (hitUseObject != null)
+                    {
+                        HitPosition = geometryHit.Value.IntersectionPointInWorldSpace;
+                        DetectedEntity = hitEntity;
 
-                if (UseObject != null && interactive != null && UseObject != interactive)
-                {
-                    UseObject.OnSelectionLost();
-                }
+                        if (UseObject != null && UseObject != hitEntity && UseObject != hitUseObject)
+                        {
+                            UseObject.OnSelectionLost();
+                        }
 
-                if (interactive != null && interactive.SupportedActions != UseActionEnum.None && (Vector3D.Distance(from, (Vector3D)h.Position)) < interactive.InteractiveDistance && Character == MySession.ControlledEntity)
-                {
-                    MyHud.SelectedObjectHighlight.Visible = true;
-                    MyHud.SelectedObjectHighlight.InteractiveObject = interactive;
+                        if (Character == MySession.Static.ControlledEntity && hitUseObject.SupportedActions != UseActionEnum.None)
+                        {
+                            HandleInteractiveObject(hitUseObject);
 
-                    UseObject = interactive;
-                    hasInteractive = true;
+                            UseObject = hitUseObject;
+                            hasUseObject = true;
+                        }
+                    }
                 }
             }
 
-            if (!hasInteractive)
+            if (!hasUseObject)
             {
                 if (UseObject != null)
                 {
@@ -154,7 +190,22 @@ namespace Sandbox.Game.Entities.Character
                 UseObject = null;         
             }
 
-            DisableDetectors();
+            ProfilerShort.End();
+        }
+
+        // Retrieves UseComponents from provided entity and above parent structure.
+        private void GetUseComponentsFromParentStructure(IMyEntity currentEntity, List<MyUseObjectsComponentBase> useComponents)
+        {
+            var useComp = currentEntity.Components.Get<MyUseObjectsComponentBase>();
+            if (useComp != null)
+            {
+                useComponents.Add(useComp);
+            }
+
+            if (currentEntity.Parent != null)
+            {
+                GetUseComponentsFromParentStructure(currentEntity.Parent, useComponents);
+            }
         }
     }
 }

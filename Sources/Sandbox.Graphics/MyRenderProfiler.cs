@@ -3,7 +3,9 @@
 using System.Diagnostics;
 using VRage;
 using VRage.Input;
+using VRage.Profiler;
 using VRageRender;
+using VRageRender.Profiler;
 
 #endregion
 
@@ -22,7 +24,6 @@ namespace Sandbox
 
             RenderProfilerCommand? command = null;
             int index = 0;
-            bool sleep = false;
 
             if (MyInput.Static.IsAnyAltKeyPressed())
             {
@@ -39,19 +40,11 @@ namespace Sandbox
                 if (MyInput.Static.IsAnyCtrlKeyPressed() && !MyInput.Static.IsKeyPress(MyKeys.Space))
                 {
                     index += 10;
-                    sleep = true;
                 }
 
                 if (MyInput.Static.IsAnyCtrlKeyPressed() && MyInput.Static.IsKeyPress(MyKeys.Space))
                 {
                     index += 20;
-                    sleep = true;
-                }
-
-                if (MyInput.Static.IsNewKeyPressed(MyKeys.NumPad0) && index == 0)
-                {
-                    command = RenderProfilerCommand.Enable;
-                    sleep = true;
                 }
 
                 if (MyInput.Static.IsAnyCtrlKeyPressed())
@@ -70,45 +63,72 @@ namespace Sandbox
                     if (MyInput.Static.IsNewKeyPressed(MyKeys.Add))
                     {
                         command = RenderProfilerCommand.NextThread;
-                        sleep = true;
                     }
 
                     if (MyInput.Static.IsNewKeyPressed(MyKeys.Subtract))
                     {
                         command = RenderProfilerCommand.PreviousThread;
-                        sleep = true;
                     }
                 }
 
                 if (MyInput.Static.IsNewKeyPressed(MyKeys.Decimal))
                 {
-                    command = RenderProfilerCommand.FindMaxChild;
+                    command = RenderProfilerCommand.ToggleEnabled;
                 }
 
                 if (MyInput.Static.IsNewKeyPressed(MyKeys.Enter))
                 {
                     command = RenderProfilerCommand.Pause;
-                    sleep = true;
                 }
 
                 if (MyInput.Static.IsAnyCtrlKeyPressed()) // Precision mode
                 {
                     if (MyInput.Static.IsNewKeyPressed(MyKeys.PageDown))
+                    {
+                        index = 1;
                         command = RenderProfilerCommand.PreviousFrame;
+                    }
 
                     if (MyInput.Static.IsNewKeyPressed(MyKeys.PageUp))
+                    {
+                        index = 1;
                         command = RenderProfilerCommand.NextFrame;
+                    }
+                }
+                else if (MyInput.Static.IsAnyShiftKeyPressed()) // Turbo mode
+                {
+                    if (MyInput.Static.IsKeyPress(MyKeys.PageDown))
+                    {
+                        index = 10;
+                        command = RenderProfilerCommand.PreviousFrame;
+                    }
+
+                    if (MyInput.Static.IsKeyPress(MyKeys.PageUp))
+                    {
+                        index = 10;
+                        command = RenderProfilerCommand.NextFrame;
+                    }
                 }
                 else
                 {
                     if (MyInput.Static.IsKeyPress(MyKeys.PageDown))
+                    {
+                        index = 1;
                         command = RenderProfilerCommand.PreviousFrame;
+                    }
 
                     if (MyInput.Static.IsKeyPress(MyKeys.PageUp))
+                    {
+                        index = 1;
                         command = RenderProfilerCommand.NextFrame;
+                    }
                 }
 
-                if (MyInput.Static.IsAnyCtrlKeyPressed() && MyInput.Static.IsNewKeyPressed(MyKeys.Home))
+                // Sort order
+                if (MyInput.Static.IsNewKeyPressed(MyKeys.Insert))
+                    command = RenderProfilerCommand.ChangeSortingOrder;
+
+                if (MyInput.Static.IsAnyCtrlKeyPressed() && MyInput.Static.IsNewKeyPressed(MyKeys.Insert))
                 {
                     command = RenderProfilerCommand.Reset;
                 }
@@ -137,17 +157,97 @@ namespace Sandbox
                     if (MyInput.Static.IsKeyPress(MyKeys.Divide))
                         command = RenderProfilerCommand.DecreaseLevel;
                 }
+
+                if (MyInput.Static.IsAnyShiftKeyPressed())
+                {
+                    if (MyInput.Static.IsNewKeyPressed(MyKeys.Divide))
+                    {
+                        command = RenderProfilerCommand.CopyPathToClipboard;
+                    }
+                    else if (MyInput.Static.IsNewKeyPressed(MyKeys.Multiply))
+                    {
+                        command = RenderProfilerCommand.TryGoToPathInClipboard;
+                    }
+                }
+
+                // Jump to the root
+                if (MyInput.Static.IsAnyCtrlKeyPressed() && MyInput.Static.IsNewKeyPressed(MyKeys.Home))
+                    command = RenderProfilerCommand.JumpToRoot;
+
+                // Disable frame selection
+                if (MyInput.Static.IsAnyCtrlKeyPressed() && MyInput.Static.IsNewKeyPressed(MyKeys.End))
+                    command = RenderProfilerCommand.DisableFrameSelection;
+
+                if (MyInput.Static.IsNewKeyPressed(MyKeys.S))
+                {
+                    command = RenderProfilerCommand.GetFomServer;
+                }
+
+                if (MyInput.Static.IsNewKeyPressed(MyKeys.C))
+                {
+                    command = RenderProfilerCommand.GetFromClient;
+                }
+                if (MyInput.Static.IsAnyCtrlKeyPressed())
+                {
+                    if (MyInput.Static.IsNewKeyPressed(MyKeys.D1))
+                    {
+                        command = RenderProfilerCommand.SaveToFile;
+                        index = 1;
+                    }
+                    else if (MyInput.Static.IsNewKeyPressed(MyKeys.D2))
+                    {
+                        command = RenderProfilerCommand.SaveToFile;
+                        index = 2;
+                    }
+                    else if (MyInput.Static.IsNewKeyPressed(MyKeys.D3))
+                    {
+                        command = RenderProfilerCommand.SaveToFile;
+                        index = 3;
+                    }
+                    else if (MyInput.Static.IsNewKeyPressed(MyKeys.D4))
+                    {
+                        command = RenderProfilerCommand.SaveToFile;
+                        index = 4;
+                    }
+                    else if (MyInput.Static.IsNewKeyPressed(MyKeys.D5))
+                    {
+                        command = RenderProfilerCommand.SaveToFile;
+                        index = 5;
+                    }
+                }
+                else
+                {
+                    if (MyInput.Static.IsNewKeyPressed(MyKeys.D1))
+                    {
+                        command = RenderProfilerCommand.LoadFromFile;
+                        index = 1;
+                    }
+                    else if (MyInput.Static.IsNewKeyPressed(MyKeys.D2))
+                    {
+                        command = RenderProfilerCommand.LoadFromFile;
+                        index = 2;
+                    }
+                    else if (MyInput.Static.IsNewKeyPressed(MyKeys.D3))
+                    {
+                        command = RenderProfilerCommand.LoadFromFile;
+                        index = 3;
+                    }
+                    else if (MyInput.Static.IsNewKeyPressed(MyKeys.D4))
+                    {
+                        command = RenderProfilerCommand.LoadFromFile;
+                        index = 4;
+                    }
+                    else if (MyInput.Static.IsNewKeyPressed(MyKeys.D5))
+                    {
+                        command = RenderProfilerCommand.LoadFromFile;
+                        index = 5;
+                    }
+                }
             }
 
             if (command.HasValue)
             {
                 VRageRender.MyRenderProxy.RenderProfilerInput(command.Value, index);
-
-                if (sleep)
-                {
-                    // TODO: OP! Why is there sleep?
-                    //System.Threading.Thread.Sleep(100);
-                }
             }
         }
     }

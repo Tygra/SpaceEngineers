@@ -1,25 +1,24 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using SharpDX;
 using SharpDX.Direct3D;
 using SharpDX.Direct3D11;
+using VRage.Render11.Common;
 using VRageMath;
-using RectangleF = VRageMath.RectangleF;
 using Vector2 = VRageMath.Vector2;
 using Vector3 = VRageMath.Vector3;
 using Color = VRageMath.Color;
 using Matrix = VRageMath.Matrix;
 using BoundingSphere = VRageMath.BoundingSphere;
 using BoundingBox = VRageMath.BoundingBox;
-using BoundingFrustum = VRageMath.BoundingFrustum;
 using Vector4 = VRageMath.Vector4;
 using Plane = VRageMath.Plane;
 using Ray = VRageMath.Ray;
 using VRageRender.Vertex;
-using VRageMath.PackedVector;
-using VRage.Voxels;
+using VRage.Render11.Resources;
+using VRageRender.Voxels;
+using SharpDX.DXGI;
+using VRage.Render11.LightingStage;
 
 namespace VRageRender
 {
@@ -29,10 +28,11 @@ namespace VRageRender
 
         static PixelShaderId m_baseColorShader;
         static PixelShaderId m_baseColorLinearShader;
+        static PixelShaderId m_albedoShader;
         static PixelShaderId m_normalShader;
+        static PixelShaderId m_normalViewShader;
         static PixelShaderId m_glossinessShader;
         static PixelShaderId m_metalnessShader;
-        static PixelShaderId m_matIDShader;
         static PixelShaderId m_aoShader;
         static PixelShaderId m_emissiveShader;
         static PixelShaderId m_ambientDiffuseShader;
@@ -40,6 +40,11 @@ namespace VRageRender
         static PixelShaderId m_edgeDebugShader;
         static PixelShaderId m_shadowsDebugShader;
         static PixelShaderId m_NDotLShader;
+        static PixelShaderId m_LODShader;
+        private static PixelShaderId m_depthShader;
+        private static ComputeShaderId m_depthReprojectionShader;
+        private static PixelShaderId m_stencilShader;
+        private static PixelShaderId m_rtShader;
 
         static VertexShaderId m_screenVertexShader;
         static PixelShaderId m_blitTextureShader;
@@ -47,191 +52,294 @@ namespace VRageRender
         static PixelShaderId m_blitTextureArrayShader;
         static InputLayoutId m_inputLayout;
 
-        static VertexBufferId m_quadBuffer;
+        static IVertexBuffer m_quadBuffer;
+
+        internal static PixelShaderId BlitTextureShader { get { return m_blitTextureShader; } }
 
         internal static void Init()
         {
             //MyRender11.RegisterSettingsChangedListener(new OnSettingsChangedDelegate(RecreateShadersForSettings));
-			m_baseColorShader = MyShaders.CreatePs("debug.hlsl", "base_color");
-            m_baseColorLinearShader = MyShaders.CreatePs("debug.hlsl", "base_color_linear");
-            m_normalShader = MyShaders.CreatePs("debug.hlsl", "normal");
-            m_glossinessShader = MyShaders.CreatePs("debug.hlsl", "glossiness");
-            m_metalnessShader = MyShaders.CreatePs("debug.hlsl", "metalness");
-            m_matIDShader = MyShaders.CreatePs("debug.hlsl", "mat_id");
-            m_aoShader = MyShaders.CreatePs("debug.hlsl", "ambient_occlusion");
-            m_emissiveShader = MyShaders.CreatePs("debug.hlsl", "emissive");
-            m_ambientDiffuseShader = MyShaders.CreatePs("debug.hlsl", "debug_ambient_diffuse");
-            m_ambientSpecularShader = MyShaders.CreatePs("debug.hlsl", "debug_ambient_specular");
-            m_edgeDebugShader = MyShaders.CreatePs("debug.hlsl", "debug_edge");
-			m_shadowsDebugShader = MyShaders.CreatePs("debug.hlsl", "cascades_shadow", MyRender11.ShaderCascadesNumberHeader());
-            m_NDotLShader = MyShaders.CreatePs("debug.hlsl", "NDotL");
+            m_screenVertexShader = MyShaders.CreateVs("Debug/DebugBaseColor.hlsl");
+            m_baseColorShader = MyShaders.CreatePs("Debug/DebugBaseColor.hlsl");
+            m_albedoShader = MyShaders.CreatePs("Debug/DebugAlbedo.hlsl");
+            m_normalShader = MyShaders.CreatePs("Debug/DebugNormal.hlsl");
+            m_normalViewShader = MyShaders.CreatePs("Debug/DebugNormalView.hlsl");
+            m_glossinessShader = MyShaders.CreatePs("Debug/DebugGlossiness.hlsl");
+            m_metalnessShader = MyShaders.CreatePs("Debug/DebugMetalness.hlsl");
+            m_aoShader = MyShaders.CreatePs("Debug/DebugAmbientOcclusion.hlsl");
+            m_emissiveShader = MyShaders.CreatePs("Debug/DebugEmissive.hlsl");
+            m_ambientDiffuseShader = MyShaders.CreatePs("Debug/DebugAmbientDiffuse.hlsl");
+            m_ambientSpecularShader = MyShaders.CreatePs("Debug/DebugAmbientSpecular.hlsl");
+            m_edgeDebugShader = MyShaders.CreatePs("Debug/DebugEdge.hlsl");
+            m_shadowsDebugShader = MyShaders.CreatePs("Debug/DebugCascadesShadow.hlsl");
+            m_NDotLShader = MyShaders.CreatePs("Debug/DebugNDotL.hlsl");
+            m_LODShader = MyShaders.CreatePs("Debug/DebugLOD.hlsl");
+            m_depthShader = MyShaders.CreatePs("Debug/DebugDepth.hlsl");
+            m_depthReprojectionShader = MyShaders.CreateCs("Debug/DebugDepthReprojection.hlsl");
+            m_stencilShader = MyShaders.CreatePs("Debug/DebugStencil.hlsl");
+            m_rtShader = MyShaders.CreatePs("Debug/DebugRt.hlsl");
 
-
-            m_screenVertexShader = MyShaders.CreateVs("debug.hlsl", "screenVertex");
-            m_blitTextureShader = MyShaders.CreatePs("debug.hlsl", "blitTexture");
-            m_blitTexture3DShader = MyShaders.CreatePs("debug.hlsl", "blitTexture3D");
-            m_blitTextureArrayShader = MyShaders.CreatePs("debug.hlsl", "blitTextureArray");
+            m_blitTextureShader = MyShaders.CreatePs("Debug/DebugBlitTexture.hlsl");
+            m_blitTexture3DShader = MyShaders.CreatePs("Debug/DebugBlitTexture3D.hlsl");
+            m_blitTextureArrayShader = MyShaders.CreatePs("Debug/DebugBlitTextureArray.hlsl");
             m_inputLayout = MyShaders.CreateIL(m_screenVertexShader.BytecodeId, MyVertexLayouts.GetLayout(MyVertexInputComponentType.POSITION2, MyVertexInputComponentType.TEXCOORD0));
 
-            m_quadBuffer = MyHwBuffers.CreateVertexBuffer(6, MyVertexFormatPosition2Texcoord.STRIDE, BindFlags.VertexBuffer, ResourceUsage.Dynamic);
+            m_quadBuffer = MyManagers.Buffers.CreateVertexBuffer(
+                "MyDebugRenderer quad", 6, MyVertexFormatPosition2Texcoord.STRIDE,
+                usage: ResourceUsage.Dynamic);
         }
 
-        internal static void DrawQuad(float x, float y, float w, float h)
+        internal static void DrawQuad(float x, float y, float w, float h, VertexShaderId? customVertexShader = null)
         {
             //RC.Context.PixelShader.Set(m_blitTextureShader);
 
-            RC.Context.VertexShader.Set(m_screenVertexShader);
-            RC.Context.InputAssembler.InputLayout = m_inputLayout;
+            VertexShaderId usedVertexShader;
+            if (!customVertexShader.HasValue)
+                usedVertexShader = m_screenVertexShader;
+            else
+                usedVertexShader = customVertexShader.Value;
 
-            var mapping = MyMapping.MapDiscard(m_quadBuffer.Buffer);
+            RC.VertexShader.Set(usedVertexShader);
+            RC.SetInputLayout(m_inputLayout);
 
-            mapping.stream.Write(new MyVertexFormatPosition2Texcoord(new Vector2(x, y), new Vector2(0, 0)));
-            mapping.stream.Write(new MyVertexFormatPosition2Texcoord(new Vector2(x + w, y + h), new Vector2(1, 1)));
-            mapping.stream.Write(new MyVertexFormatPosition2Texcoord(new Vector2(x, y + h), new Vector2(0, 1)));
+            var mapping = MyMapping.MapDiscard(m_quadBuffer);
+            var tmpFormat = new MyVertexFormatPosition2Texcoord(new Vector2(x, y), new Vector2(0, 0));
+            mapping.WriteAndPosition(ref tmpFormat);
 
-            mapping.stream.Write(new MyVertexFormatPosition2Texcoord(new Vector2(x, y), new Vector2(0, 0)));
-            mapping.stream.Write(new MyVertexFormatPosition2Texcoord(new Vector2(x + w, y), new Vector2(1, 0)));
-            mapping.stream.Write(new MyVertexFormatPosition2Texcoord(new Vector2(x + w, y + h), new Vector2(1, 1)));
+            tmpFormat = new MyVertexFormatPosition2Texcoord(new Vector2(x + w, y + h), new Vector2(1, 1));
+            mapping.WriteAndPosition(ref tmpFormat);
+
+            tmpFormat = new MyVertexFormatPosition2Texcoord(new Vector2(x, y + h), new Vector2(0, 1));
+            mapping.WriteAndPosition(ref tmpFormat);
+
+            tmpFormat = new MyVertexFormatPosition2Texcoord(new Vector2(x, y), new Vector2(0, 0));
+            mapping.WriteAndPosition(ref tmpFormat);
+
+            tmpFormat = new MyVertexFormatPosition2Texcoord(new Vector2(x + w, y), new Vector2(1, 0));
+            mapping.WriteAndPosition(ref tmpFormat);
+
+            tmpFormat = new MyVertexFormatPosition2Texcoord(new Vector2(x + w, y + h), new Vector2(1, 1));
+            mapping.WriteAndPosition(ref tmpFormat);
 
             mapping.Unmap();
 
-            RC.Context.InputAssembler.PrimitiveTopology = PrimitiveTopology.TriangleList;
+            RC.SetPrimitiveTopology(PrimitiveTopology.TriangleList);
 
-            RC.Context.InputAssembler.SetVertexBuffers(0, new VertexBufferBinding(m_quadBuffer.Buffer, m_quadBuffer.Stride, 0));
-            RC.Context.Draw(6, 0);
+            RC.SetVertexBuffer(0, m_quadBuffer);
+            RC.Draw(6, 0);
         }
 
-        internal static void DrawEnvProbeQuad(float x, float y, float w, float h, int i)
+        internal unsafe static void DrawAtmosphereTransmittance(uint ID)
         {
-            RC.Context.PixelShader.Set(m_blitTextureShader);
-            
-            RC.Context.PixelShader.SetShaderResource(0, MyGeometryRenderer.m_envProbe.cubemapPrefiltered.SubresourceSrv(i, 1));
+            var tex = MyAtmosphereRenderer.AtmosphereLUT[ID].TransmittanceLut;
+
+            RC.PixelShader.Set(m_blitTextureShader);
+            RC.PixelShader.SetSrv(0, tex);
+
+            DrawQuad(256, 0, 256, 64);
+
+            RC.PixelShader.SetSrv(0, null);
+        }
+
+        internal static void DrawSrvTexture(float x, float y, float w, float h, ISrvBindable tex)
+        {
+            RC.PixelShader.Set(m_blitTextureShader);
+
+            RC.PixelShader.SetSrv(0, tex);
 
             DrawQuad(x, y, w, h);
         }
 
-        internal static void DrawCascades()
+        internal static void DrawDepthArrayTexture(IDepthArrayTexture tex, int quadStartX, int quadStartY, int quadSize)
         {
-            RC.Context.PixelShader.Set(m_blitTextureArrayShader);
-            RC.Context.PixelShader.SetShaderResource(0, MyShadows.m_cascadeShadowmapArray.ShaderView);
+            DrawSrvArrayTexture(tex, tex.NumSlices, quadStartX, quadStartY, quadSize);
+        }
+
+        private static void DrawSrvArrayTexture(ISrvBindable textureArray, int texCount, int quadStartX, int quadStartY, int quadSize)
+        {
+            RC.PixelShader.Set(m_blitTextureArrayShader);
+            RC.PixelShader.SetSrv(0, textureArray);
 
             var cb = MyCommon.GetMaterialCB(sizeof(uint));
-            RC.Context.PixelShader.SetConstantBuffer(5, cb);
+            RC.PixelShader.SetConstantBuffer(5, cb);
 
-            for (uint i = 0; i < 4; i++)
+            for (uint cascadeIndex = 0; cascadeIndex < texCount; cascadeIndex++)
             {
+                float index = (float)cascadeIndex;
                 var mapping = MyMapping.MapDiscard(cb);
-                mapping.stream.Write((float)i);
+                mapping.WriteAndPosition(ref index);
                 mapping.Unmap();
-                DrawQuad(0, 256 * i, 410, 256);
-
+                DrawQuad(quadStartX + (quadSize + quadStartX / 2) * cascadeIndex, quadStartY, quadSize, quadSize * MyRender11.ViewportResolution.Y / MyRender11.ViewportResolution.X);
             }
-            RC.Context.PixelShader.SetShaderResource(0, null);
+            RC.PixelShader.SetSrv(0, null);
+        }
+
+        internal static void DrawParticles(ISrvBindable particleRenderTarget, int quadStartX, int quadStartY, int quadSize)
+        {
+            RC.PixelShader.Set(m_blitTextureShader);
+            RC.AllShaderStages.SetSrv(0, particleRenderTarget);
+            RC.SetBlendState(MyBlendStateManager.BlendAlphaPremult);
+
+            DrawQuad(quadStartX, quadStartY, quadSize, quadSize * MyRender11.ViewportResolution.Y / MyRender11.ViewportResolution.X);
+            RC.SetBlendState(null);
+            RC.PixelShader.SetSrv(0, null);
         }
 
         internal static void DrawEnvProbe()
         {
-            //MyGeometryRenderer.m_envProbe.cubemap
-
-            DrawEnvProbeQuad(256 * 2, 256 * 1, 256, 256, 0);
-            DrawEnvProbeQuad(256 * 0, 256 * 1, 256, 256, 1);
-            DrawEnvProbeQuad(256 * 1, 256 * 0, 256, 256, 2);
-            DrawEnvProbeQuad(256 * 1, 256 * 2, 256, 256, 3);
-            DrawEnvProbeQuad(256 * 1, 256 * 1, 256, 256, 4);
-            DrawEnvProbeQuad(256 * 3, 256 * 1, 256, 256, 5);
+            int colorMipmap = 0;
+            IUavArrayTexture colorTexture = MyManagers.EnvironmentProbe.Cubemap;
+            DrawSrvTexture(256 * 2, 256 * 1, 256, 256, colorTexture.SubresourceSrv(0, colorMipmap));
+            DrawSrvTexture(256 * 0, 256 * 1, 256, 256, colorTexture.SubresourceSrv(1, colorMipmap));
+            DrawSrvTexture(256 * 1, 256 * 0, 256, 256, colorTexture.SubresourceSrv(2, colorMipmap));
+            DrawSrvTexture(256 * 1, 256 * 2, 256, 256, colorTexture.SubresourceSrv(3, colorMipmap));
+            DrawSrvTexture(256 * 1, 256 * 1, 256, 256, colorTexture.SubresourceSrv(4, colorMipmap));
+            DrawSrvTexture(256 * 3, 256 * 1, 256, 256, colorTexture.SubresourceSrv(5, colorMipmap));
         }
 
-        internal static void Draw()
+        internal static void Draw(IRtvBindable renderTarget, IRtvTexture ambientOcclusion)
         {
-            var context = RC.Context;
-            context.InputAssembler.PrimitiveTopology = PrimitiveTopology.TriangleList;
-            context.Rasterizer.SetViewport(0, 0, MyRender11.ViewportResolution.X, MyRender11.ViewportResolution.Y);
-            context.PixelShader.SetConstantBuffer(MyCommon.FRAME_SLOT, MyCommon.FrameConstants);
+            RC.SetPrimitiveTopology(PrimitiveTopology.TriangleList);
+            RC.SetViewport(0, 0, MyRender11.ViewportResolution.X, MyRender11.ViewportResolution.Y);
+            RC.PixelShader.SetConstantBuffer(MyCommon.FRAME_SLOT, MyCommon.FrameConstants);
 
-            RC.BindDepthRT(null, DepthStencilAccess.ReadWrite, MyRender11.Backbuffer);
-            RC.BindGBufferForRead(0, MyGBuffer.Main);
-            
-            //context.OutputMerger.SetTargets(null as DepthStencilView, MyRender.Backbuffer.RenderTarget);
+            RC.SetRtv(renderTarget);
+            RC.PixelShader.SetSrvs(0, MyGBuffer.Main);
 
-            //context.PixelShader.SetShaderResources(0, MyRender.MainGbuffer.DepthGbufferViews);
+            RC.SetBlendState(null);
 
-            context.OutputMerger.BlendState = null;
-
-            RC.SetVS(null);
-            RC.Context.InputAssembler.SetVertexBuffers(0, new VertexBufferBinding());
-            RC.Context.InputAssembler.InputLayout = null;
-
-            if(MyRender11.Settings.DisplayGbufferColor)
+            if (MyRender11.Settings.DisplayGbufferColor)
             {
-                context.PixelShader.Set(m_baseColorShader);
+                RC.PixelShader.Set(m_baseColorShader);
                 MyScreenPass.DrawFullscreenQuad();
             }
-            if (MyRender11.Settings.DisplayGbufferColorLinear)
+            else if (MyRender11.Settings.DisplayGbufferAlbedo)
             {
-                context.PixelShader.Set(m_baseColorLinearShader);
+                RC.PixelShader.Set(m_albedoShader);
                 MyScreenPass.DrawFullscreenQuad();
             }
             else if (MyRender11.Settings.DisplayGbufferNormal)
             {
-                context.PixelShader.Set(m_normalShader);
+                RC.PixelShader.Set(m_normalShader);
+                MyScreenPass.DrawFullscreenQuad();
+            }
+            else if (MyRender11.Settings.DisplayGbufferNormalView)
+            {
+                RC.PixelShader.Set(m_normalViewShader);
                 MyScreenPass.DrawFullscreenQuad();
             }
             else if (MyRender11.Settings.DisplayGbufferGlossiness)
             {
-                context.PixelShader.Set(m_glossinessShader);
+                RC.PixelShader.Set(m_glossinessShader);
                 MyScreenPass.DrawFullscreenQuad();
             }
             else if (MyRender11.Settings.DisplayGbufferMetalness)
             {
-                context.PixelShader.Set(m_metalnessShader);
+                RC.PixelShader.Set(m_metalnessShader);
                 MyScreenPass.DrawFullscreenQuad();
             }
-            else if (MyRender11.Settings.DisplayGbufferMaterialID)
+            else if (MyRender11.Settings.DisplayGbufferAO)
             {
-                context.PixelShader.Set(m_matIDShader);
-                MyScreenPass.DrawFullscreenQuad();
-            }
-            else if (MyRender11.Settings.DisplayAO)
-            {
-                context.PixelShader.SetShaderResource(12, MyScreenDependants.m_ambientOcclusion.m_SRV);
-
-                context.PixelShader.Set(m_aoShader);
+                RC.PixelShader.Set(m_aoShader);
                 MyScreenPass.DrawFullscreenQuad();
             }
             else if (MyRender11.Settings.DisplayEmissive)
             {
-                context.PixelShader.Set(m_emissiveShader);
+                RC.PixelShader.Set(m_emissiveShader);
                 MyScreenPass.DrawFullscreenQuad();
             }
-            else if(MyRender11.Settings.DisplayAmbientDiffuse)
+            else if (MyRender11.Settings.DisplayAmbientDiffuse)
             {
-                context.PixelShader.Set(m_ambientDiffuseShader);
+                RC.PixelShader.Set(m_ambientDiffuseShader);
                 MyScreenPass.DrawFullscreenQuad();
             }
-            else if(MyRender11.Settings.DisplayAmbientSpecular)
+            else if (MyRender11.Settings.DisplayAmbientSpecular)
             {
-                context.PixelShader.Set(m_ambientSpecularShader);
+                RC.PixelShader.Set(m_ambientSpecularShader);
                 MyScreenPass.DrawFullscreenQuad();
             }
-            else if(MyRender11.Settings.DisplayEdgeMask)
+            else if (MyRender11.Settings.DisplayEdgeMask)
             {
-                context.PixelShader.Set(m_edgeDebugShader);
+                RC.PixelShader.Set(m_edgeDebugShader);
                 MyScreenPass.DrawFullscreenQuad();
             }
             else if (MyRender11.Settings.DisplayShadowsWithDebug)
             {
-                context.PixelShader.Set(m_shadowsDebugShader);
+                RC.PixelShader.Set(m_shadowsDebugShader);
                 MyScreenPass.DrawFullscreenQuad();
             }
             else if (MyRender11.Settings.DisplayNDotL)
             {
-                context.PixelShader.Set(m_NDotLShader);
+                RC.PixelShader.Set(m_NDotLShader);
                 MyScreenPass.DrawFullscreenQuad();
             }
+            else if (MyRender11.Settings.DisplayGbufferLOD)
+            {
+                RC.PixelShader.Set(m_LODShader);
+                MyScreenPass.DrawFullscreenQuad();
+            }
+            else if (MyRender11.Settings.DisplayMipmap)
+            {
+                RC.PixelShader.Set(m_baseColorShader);
+                MyScreenPass.DrawFullscreenQuad();
+            }
+            else if (MyRender11.Settings.DisplayDepth)
+            {
+                RC.PixelShader.Set(m_depthShader);
+                MyScreenPass.DrawFullscreenQuad();
+            }
+            else if (MyRender11.Settings.DisplayReprojectedDepth)
+            {
+                var dst = MyManagers.RwTexturesPool.BorrowUav("DebugRender.DepthReprojection", Format.R32_Float);
+                MyRender11.RC.ClearUav(dst, SharpDX.Int4.Zero);
+
+                RC.ComputeShader.SetConstantBuffer(MyCommon.FRAME_SLOT, MyCommon.FrameConstants);
+                RC.ComputeShader.SetSrv(0, MyGBuffer.Main.DepthStencil.SrvDepth);
+                RC.ComputeShader.SetUav(0, dst);
+                RC.ComputeShader.Set(m_depthReprojectionShader);
+                int numThreadGroupsX = align(MyRender11.ResolutionI.X, 32) / 32;
+                int numThreadGroupsY = align(MyRender11.ResolutionI.Y, 32) / 32;
+                RC.Dispatch(numThreadGroupsX, numThreadGroupsY, 1);
+                RC.ComputeShader.SetSrv(0, null);
+                RC.ComputeShader.SetUav(0, null);
+
+                RC.PixelShader.SetSrv(0, dst);
+                RC.PixelShader.Set(m_depthShader);
+                MyScreenPass.DrawFullscreenQuad();
+
+                RC.PixelShader.SetSrv(0, MyGBuffer.Main.DepthStencil.SrvDepth);
+            }
+            else if (MyRender11.Settings.DisplayStencil)
+            {
+                RC.PixelShader.Set(m_stencilShader);
+                MyScreenPass.DrawFullscreenQuad();
+            }
+            else if (MyRender11.Settings.DisplayAO)
+            {
+                RC.PixelShader.SetSrv(0, ambientOcclusion);
+                RC.PixelShader.SetSampler(0, MySamplerStateManager.Linear);
+                RC.PixelShader.Set(m_rtShader);
+                MyScreenPass.DrawFullscreenQuad();
+            }
+            else if (MyRender11.Settings.DisplayEnvProbe)
+            {
+                DrawEnvProbe();
+            }
+
             //DrawEnvProbe();
             //DrawAtmosphereTransmittance(MyAtmosphereRenderer.AtmosphereLUT.Keys.ToArray()[0]);
             //DrawAtmosphereInscatter(MyAtmosphereRenderer.AtmosphereLUT.Keys.ToArray()[0]);
-            //DrawCascades();
+
+            if (MyRender11.Settings.DrawCascadeTextures)
+            {
+                //DrawDepthArrayTexture(MyManagers.Shadow.GetCsmForGbuffer(), 100, 100, 200);
+                DrawDepthArrayTexture(MyRender11.DynamicShadows.ShadowCascades.CascadeShadowmapArray, 100, 100, 200);
+                if (MyScene.SeparateGeometry)
+                {
+                    DrawDepthArrayTexture(MyRender11.StaticShadows.ShadowCascades.CascadeShadowmapArray, 100, 300, 200);
+                    DrawDepthArrayTexture(MyShadowCascades.CombineShadowmapArray, 100, 500, 200);
+                }
+            }
 
             if (MyRender11.Settings.DisplayIDs || MyRender11.Settings.DisplayAabbs)
             {
@@ -242,9 +350,9 @@ namespace VRageRender
             {
                 var batch = MyLinesRenderer.CreateBatch();
 
-                foreach (var light in MyLightRendering.VisiblePointlights)
+                foreach (var light in MyLightsRendering.VisiblePointlights)
                 {
-                    batch.AddSphereRing(new BoundingSphere(light.Position, 0.5f), Color.White, Matrix.Identity);
+                    batch.AddSphereRing(new BoundingSphere(light.PointPosition, 0.5f), Color.White, Matrix.Identity);
                 }
                 batch.Commit();
             }
@@ -261,7 +369,7 @@ namespace VRageRender
                 //        if (renderable.m_lod >= LOD_COLORS.Length)
                 //            return;
 
-                //        BoundingBox bb = new BoundingBox(renderable.m_owner.Aabb.Min - MyEnvironment.CameraPosition,renderable.m_owner.Aabb.Max - MyEnvironment.CameraPosition);
+                //        BoundingBox bb = new BoundingBox(renderable.m_owner.Aabb.Min - MyRender11.Environment.CameraPosition,renderable.m_owner.Aabb.Max - MyRender11.Environment.CameraPosition);
 
                 //        batch.AddBoundingBox(bb, new Color(LOD_COLORS[renderable.m_voxelLod]));
 
@@ -303,13 +411,13 @@ namespace VRageRender
             //        } 
             //    }
 
-                
+
 
             //    batch.Commit();
             //}
 
             // draw lods
-            if(false)
+            if (false)
             {
                 var batch = MyLinesRenderer.CreateBatch();
 
@@ -326,49 +434,34 @@ namespace VRageRender
             }
         }
 
-       private static readonly Vector4[]  LOD_COLORS = 
-    {
-	new Vector4( 1, 0, 0, 1 ),
-	new Vector4(  0, 1, 0, 1 ),
-	new Vector4(  0, 0, 1, 1 ),
+        private static int align(int value, int alignment) { return (value + (alignment - 1)) & ~(alignment - 1); }
+        private static readonly Vector4[] LOD_COLORS = 
+        {
+	        new Vector4( 1, 0, 0, 1 ),
+	        new Vector4(  0, 1, 0, 1 ),
+	        new Vector4(  0, 0, 1, 1 ),
 
-	new Vector4(  1, 1, 0, 1 ),
-	new Vector4(  0, 1, 1, 1 ),
-	new Vector4(  1, 0, 1, 1 ),
+	        new Vector4(  1, 1, 0, 1 ),
+	        new Vector4(  0, 1, 1, 1 ),
+	        new Vector4(  1, 0, 1, 1 ),
 
-	new Vector4(  0.5f, 0, 1, 1 ),
-	new Vector4(  0.5f, 1, 0, 1 ),
-	new Vector4(  1, 0, 0.5f, 1 ),
-	new Vector4(  0, 1, 0.5f, 1 ),
+	        new Vector4(  0.5f, 0, 1, 1 ),
+	        new Vector4(  0.5f, 1, 0, 1 ),
+	        new Vector4(  1, 0, 0.5f, 1 ),
+	        new Vector4(  0, 1, 0.5f, 1 ),
 
-	new Vector4(  1, 0.5f, 0, 1 ),
-	new Vector4(  0, 0.5f, 1, 1 ),
+	        new Vector4(  1, 0.5f, 0, 1 ),
+	        new Vector4(  0, 0.5f, 1, 1 ),
 
-	new Vector4(  0.5f, 1, 1, 1 ),
-	new Vector4(  1, 0.5f, 1, 1 ),
-	new Vector4(  1, 1, 0.5f, 1 ),
-	new Vector4(  0.5f, 0.5f, 1, 1 ),	
-};
-
-
-        //internal static void BeginQuadRendering()
-        //{
-        //    var context = MyRender.Context;
-
-        //    context.InputAssembler.PrimitiveTopology = PrimitiveTopology.TriangleList;
-        //    context.Rasterizer.SetViewport(0, 0, MyRender.ViewportResolution.X, MyRender.ViewportResolution.Y);
-        //    context.OutputMerger.SetTargets(null as DepthStencilView, MyRender.Backbuffer.RenderTarget);
-        //    context.OutputMerger.BlendState = null;
-        //}
-
-        //internal static void DrawQuad()
-        //{
-
-        //}
+	        new Vector4(  0.5f, 1, 1, 1 ),
+	        new Vector4(  1, 0.5f, 1, 1 ),
+	        new Vector4(  1, 1, 0.5f, 1 ),
+	        new Vector4(  0.5f, 0.5f, 1, 1 ),	
+        };
 
         internal static void DrawHierarchyDebug()
         {
-            var worldToClip = MyEnvironment.ViewProjection;
+            var worldToClip = MyRender11.Environment.Matrices.ViewProjection;
             var displayString = new StringBuilder();
 
             var batch = MyLinesRenderer.CreateBatch();
@@ -383,16 +476,18 @@ namespace VRageRender
                     Vector3 position;
                     uint ID;
 
-                    if(r!= null)
+                    if (r != null)
                     {
-                        position = r.m_owner.WorldMatrix.Translation;
-                        ID = r.m_owner.ID;
+                        position = r.Owner.WorldMatrix.Translation;
+                        ID = r.Owner.ID;
                     }
-                    else if(h != null) {
-                        position = h.m_owner.WorldMatrix.Translation;
-                        ID = h.m_owner.ID;
+                    else if (h != null)
+                    {
+                        position = h.Owner.WorldMatrix.Translation;
+                        ID = h.Owner.ID;
                     }
-                    else {
+                    else
+                    {
                         continue;
                     }
 
@@ -403,7 +498,7 @@ namespace VRageRender
                     if (clipPosition.Z > 0 && clipPosition.Z < 1)
                     {
                         displayString.AppendFormat("{0}", ID);
-                        MySpritesRenderer.DrawText(new Vector2(clipPosition.X, clipPosition.Y) * MyRender11.ViewportResolution,
+                        MyDebugTextHelpers.DrawText(new Vector2(clipPosition.X, clipPosition.Y) * MyRender11.ViewportResolution,
                             displayString, Color.DarkCyan, 0.5f);
                     }
 
@@ -411,43 +506,31 @@ namespace VRageRender
                 }
             }
 
-            if(MyRender11.Settings.DisplayAabbs)
+            if (MyRender11.Settings.DisplayAabbs)
             {
-                //foreach (var h in MyComponentFactory<MyHierarchyComponent>.GetAll())
-                //{
-                //    if (h.IsParent)
-                //    {
-                //        batch.AddBoundingBox(h.m_owner.Aabb, Color.Red);
-                //    }
-                //    else
-                //    {
-                //        batch.AddBoundingBox(h.m_owner.Aabb, Color.Orange);
-                //    }
-                //}
-
-                foreach(var actor in MyActorFactory.GetAll())
+                foreach (var actor in MyActorFactory.GetAll())
                 {
                     var h = actor.GetGroupRoot();
                     var r = actor.GetRenderable();
 
-                    if(h != null)
+                    if (h != null)
                     {
                         var bb = BoundingBoxD.CreateInvalid();
 
                         foreach (var child in h.m_children)
                         {
-                            if(child.m_visible)
-                            { 
+                            if (child.IsVisible)
+                            {
                                 bb.Include(child.Aabb);
                             }
                         }
 
-                        batch.AddBoundingBox((BoundingBox)bb, Color.Red);
-                        MyPrimitivesRenderer.Draw6FacedConvex(bb.GetCorners().Select(x=>(Vector3)x).ToArray(), Color.Red, 0.1f);
+                        batch.AddBoundingBox(((BoundingBox)bb).Translate(-MyRender11.Environment.Matrices.CameraPosition), Color.Red);
+                        MyPrimitivesRenderer.Draw6FacedConvexZ(bb.GetCorners().Select(x => (Vector3)x).ToArray(), Color.Red, 0.1f);
                     }
-                    else if(r!=null && actor.GetGroupLeaf() == null)
+                    else if (r != null && actor.GetGroupLeaf() == null)
                     {
-                        batch.AddBoundingBox((BoundingBox)r.m_owner.Aabb, Color.Green);
+                        batch.AddBoundingBox(((BoundingBox)r.Owner.Aabb).Translate(-MyRender11.Environment.Matrices.CameraPosition), Color.Green);
                     }
                 }
             }
@@ -482,9 +565,9 @@ namespace VRageRender
         {
             //if(true)
             //{
-            //    //m_proj = MyEnvironment.Projection;
-            //    //m_vp = MyEnvironment.ViewProjection;
-            //    //m_invvp = MyEnvironment.InvViewProjection;
+            //    //m_proj = MyRender11.Environment.Projection;
+            //    //m_vp = MyRender11.Environment.ViewProjection;
+            //    //m_invvp = MyRender11.Environment.InvViewProjection;
 
             //    Vector2 groupDim = new Vector2(256, 256);
             //    Vector2 tileScale = new Vector2(1600, 900) / (2 * groupDim);
@@ -529,7 +612,7 @@ namespace VRageRender
             //    batch.AddFrustum(new BoundingFrustum(m_vp), Color.Green);
 
             //    batch.Commit();
-                
+
             //}
 
             // draw lights
@@ -561,11 +644,11 @@ namespace VRageRender
             {
                 MyLinesBatch batch = MyLinesRenderer.CreateBatch();
 
-                foreach(var r in MyComponentFactory<MyRenderableComponent>.GetAll())
+                foreach (var r in MyComponentFactory<MyRenderableComponent>.GetAll())
                 {
-                    if(r.m_owner.GetComponent(MyActorComponentEnum.Instancing) != null)
+                    if (r.Owner.GetInstanceLod() != null)
                     {
-                        batch.AddBoundingBox((BoundingBox)r.m_owner.Aabb, Color.Blue);
+                        batch.AddBoundingBox((BoundingBox)r.Owner.Aabb, Color.Blue);
                     }
                 }
 
@@ -582,16 +665,16 @@ namespace VRageRender
                 var colors = new[] { Color.Red, Color.Green, Color.Blue, Color.Yellow, Color.Pink, Color.MediumVioletRed };
 
                 var prevPositionG = Vector3.PositiveInfinity;
-                for(int i=0; i<4; i++)
+                for (int i = 0; i < 4; i++)
                 {
                     float levelCellSize = cellSize * (float)Math.Pow(2, i);
-                    var position = MyEnvironment.CameraPosition;
+                    var position = MyRender11.Environment.Matrices.CameraPosition;
                     //var position = Vector3.Zero;
                     position.Y = 0;
                     var positionG = position.Snap(levelCellSize * 2);
 
                     float radiusMin = radius[i];
-                    float radiusMax = radius[i+1];
+                    float radiusMax = radius[i + 1];
 
                     // naive
 
@@ -619,7 +702,7 @@ namespace VRageRender
                     //    }
                     //}
                     //else 
-                    { 
+                    {
                         for (var x = pmin.X; x < pmax.X; x += levelCellSize)
                         {
                             for (var z = pmin.Z; z < pmax.Z; z += levelCellSize)

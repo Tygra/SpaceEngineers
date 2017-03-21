@@ -10,13 +10,20 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using VRageMath; 
+using VRageMath;
 using VRage;
 using Sandbox.Definitions;
 using Sandbox.Engine.Models;
 using Sandbox.Game.World;
 using VRage.Utils;
 using Sandbox.Game.EntityComponents;
+using Sandbox.Game.Multiplayer;
+using VRage.ModAPI;
+using VRageMath.Spatial;
+
+using VRage.Game;
+using VRage.Generics;
+using VRage.Profiler;
 
 
 namespace Sandbox.Game.Entities.Cube
@@ -39,10 +46,9 @@ namespace Sandbox.Game.Entities.Cube
 
         private MyCubeBlockCollector m_blockCollector = new MyCubeBlockCollector();
         private HkMassProperties m_massProperties = new HkMassProperties();
-		private HkMassProperties m_originalMassProperties = new HkMassProperties();
-		private bool m_originalMassPropertiesSet = false;
+        private HkMassProperties m_originalMassProperties = new HkMassProperties();
+        private bool m_originalMassPropertiesSet = false;
 
-        private List<HkMassElement> m_tmpElements = new List<HkMassElement>();
         private List<HkShape> m_tmpShapes = new List<HkShape>();
 
         private HashSet<MySlimBlock> m_tmpRemovedBlocks = new HashSet<MySlimBlock>();
@@ -52,12 +58,17 @@ namespace Sandbox.Game.Entities.Cube
         private MyCubeGrid m_grid;
         private HkGridShape m_root;
 
-        private Dictionary<Vector3I, HkMassElement> m_massElements;
+        //private Dictionary<Vector3I, HkMassElement> m_massElements;
         public HkdBreakableShape BreakableShape { get; set; }
         private Dictionary<Vector3I, HkdShapeInstanceInfo> m_blocksShapes = new Dictionary<Vector3I, HkdShapeInstanceInfo>(); //dic for connectivity>
 
         // TODO: Use this and build final mass properties from mass properties calculated for cells, cell size 8 will be probably fine
-        //private MySparseGrid<HkMassElement, HkMassProperties> m_massElements;
+        private const int MassCellSize = 8;
+        private MyGridMassComputer m_massElements;
+
+        [ThreadStatic]
+        private static List<HkMassElement> s_tmpElements;
+        private static List<HkMassElement> TmpElements { get { return MyUtils.Init(ref s_tmpElements); } }
 
         public static uint INVALID_COMPOUND_ID = 0xFFFFFFFF;
 
@@ -70,10 +81,10 @@ namespace Sandbox.Game.Entities.Cube
             get { return m_grid.IsStatic ? null : (HkMassProperties?)m_massProperties; }
         }
 
-		public HkMassProperties? BaseMassProperties
-		{
-			get { return m_grid.IsStatic || !m_originalMassPropertiesSet ? null : (HkMassProperties?)m_originalMassProperties; }
-		}
+        public HkMassProperties? BaseMassProperties
+        {
+            get { return m_grid.IsStatic || !m_originalMassPropertiesSet ? null : (HkMassProperties?)m_originalMassProperties; }
+        }
 
         public MyGridShape(MyCubeGrid grid)
         {
@@ -84,7 +95,7 @@ namespace Sandbox.Game.Entities.Cube
                 m_segmenter = new MyVoxelSegmentation();
             //if (!grid.IsStatic)
             {
-                m_massElements = new Dictionary<Vector3I, HkMassElement>();
+                m_massElements = new MyGridMassComputer(4);
             }
 
             try
@@ -103,6 +114,11 @@ namespace Sandbox.Game.Entities.Cube
             {
                 m_blockCollector.Clear();
             }
+        }
+
+        public void GetShapesInInterval(Vector3I min, Vector3I max, List<HkShape> shapeList)
+        {
+            m_root.GetShapesInInterval(min, max, shapeList);
         }
 
         private void AddShapesFromCollector()
@@ -126,36 +142,12 @@ namespace Sandbox.Game.Entities.Cube
 
         private void UpdateMassProperties()
         {
-            m_tmpElements.Clear();
-            foreach (var kv in m_massElements)
+            m_massProperties = m_massElements.UpdateMass();
+            if (!m_originalMassPropertiesSet)
             {
-                m_tmpElements.Add(kv.Value);
+                m_originalMassProperties = m_massProperties;
+                m_originalMassPropertiesSet = true;
             }
-
-            Debug.Assert(m_massElements.Count > 0, "Mass can't be zero, in that case, grid should not be created");
-
-            // HACK: this prevents crash, but it's generally on wrong place, but we don't know how to handle it higher on call stack
-            if (m_tmpElements.Count > 0)
-            {
-                try
-                {
-                    ProfilerShort.Begin("TensorComputer");
-                    m_massProperties = HkInertiaTensorComputer.CombineMassProperties(m_tmpElements);
-					if (!m_originalMassPropertiesSet)
-					{
-						m_originalMassProperties = m_massProperties;
-						m_originalMassPropertiesSet = true;
-					}
-                    ProfilerShort.End();
-                }
-                catch
-                {
-                    MySandboxGame.Log.WriteLine("Error building mopp, element count: " + m_tmpElements.Count);
-                    MySandboxGame.Log.WriteLine("Elements: " + m_tmpElements.Select(s => s.Properties.Mass.ToString() + "kg").Aggregate((a, b) => a + ", " + b));
-                    throw;
-                }
-            }
-            m_tmpElements.Clear();
         }
 
         public void Dispose()
@@ -175,6 +167,11 @@ namespace Sandbox.Game.Entities.Cube
             }
             foreach (var shape in m_blocksShapes.Values)
             {
+                if (!shape.IsReferenceValid())
+                {
+                    MyLog.Default.WriteLine("Block shape was disposed already in MyGridShape.Dispose!");
+                }
+
                 if (shape.Shape.IsValid())
                     shape.Shape.RemoveReference();
                 shape.RemoveReference();
@@ -185,23 +182,25 @@ namespace Sandbox.Game.Entities.Cube
                 m_root.Base.RemoveReference();
         }
 
-        public void RefreshBlocks(HkRigidBody rigidBody, HkRigidBody rigidBody2, MyGridPhysics.MyDirtyBlocksInfo dirtyCubesInfo, HkdBreakableBody destructionBody = null)
+        public void RefreshBlocks(HkRigidBody rigidBody, HkRigidBody rigidBody2, MyGridPhysics.MyDirtyBlocksInfo dirtyCubesInfo, HkdBreakableBody destructionBody = null, bool blocksChanged = true)
         {
             ProfilerShort.Begin("Refresh shape");
+            if (blocksChanged)
+            {
+                if (m_grid.GetPhysicsBody().HavokWorld != null)
+                    if (m_grid.BlocksDestructionEnabled)
+                        UnmarkBreakable(m_grid.GetPhysicsBody().HavokWorld, rigidBody);
 
-            if (m_grid.Physics.HavokWorld != null)
-                if (m_grid.BlocksDestructionEnabled)
-                    UnmarkBreakable(m_grid.Physics.HavokWorld, rigidBody);
+                m_originalMassPropertiesSet = false;
+                UpdateDirtyBlocks(dirtyCubesInfo.DirtyBlocks);
+                UpdateMass(rigidBody, false);
+                UpdateMassFromInventories(m_grid.CubeBlocks, rigidBody.GetBody());
 
-			m_originalMassPropertiesSet = false;
-            UpdateDirtyBlocks(dirtyCubesInfo.DirtyBlocks);
-            UpdateMass(rigidBody, false);
-			UpdateMassFromInventories(m_grid.CubeBlocks, rigidBody.GetBody());
+                if (m_grid.GetPhysicsBody().HavokWorld != null)
+                    if (m_grid.BlocksDestructionEnabled)
+                        MarkBreakable(m_grid.GetPhysicsBody().HavokWorld, rigidBody);
+            }
             UpdateShape(rigidBody, rigidBody2, destructionBody);
-
-            if (m_grid.Physics.HavokWorld != null)
-                if (m_grid.BlocksDestructionEnabled)
-                    MarkBreakable(m_grid.Physics.HavokWorld, rigidBody);
 
             ProfilerShort.End();
         }
@@ -260,7 +259,7 @@ namespace Sandbox.Game.Entities.Cube
         }
 
         private HashSet<Vector3I> m_updateConnections = new HashSet<Vector3I>();
-        public void UpdateDirtyBlocks(HashSet<Vector3I> dirtyCubes, bool recreateShape = true)
+        internal void UpdateDirtyBlocks(HashSet<Vector3I> dirtyCubes, bool recreateShape = true)
         {
             ProfilerShort.Begin("Update physics");
             if (dirtyCubes.Count > 0)
@@ -286,6 +285,19 @@ namespace Sandbox.Game.Entities.Cube
                         var b = m_grid.GetCubeBlock(dirty);
                         if (b == null || newBlocks.Contains(b))
                             continue;
+
+                        // Remove the shape for a block if it spans more cubes
+                        if (b.Position != dirty)
+                        {
+                            if (m_blocksShapes.ContainsKey(b.Position))
+                            {
+                                var toRemove = m_blocksShapes[b.Position];
+                                toRemove.Shape.RemoveReference();
+                                toRemove.RemoveReference();
+                                m_blocksShapes.Remove(b.Position);
+                            }
+                        }
+
                         newBlocks.Add(b);
                         newShapes++;
                     }
@@ -459,7 +471,7 @@ namespace Sandbox.Game.Entities.Cube
                 ProfilerShort.Begin("SetBreakableShape");
                 destructionBody.BreakableShape = BreakableShape;
                 ProfilerShort.BeginNextBlock("ConnectToWorld");
-                CreateConnectionToWorld(destructionBody);
+                CreateConnectionToWorld(destructionBody, m_grid.Physics.HavokWorld);
                 ProfilerShort.End();
                 //breakableShape.Dispose();
             }
@@ -475,44 +487,66 @@ namespace Sandbox.Game.Entities.Cube
         }
 
         List<Havok.HkBodyCollision> m_penetrations = new List<Havok.HkBodyCollision>();
+        private List<MyVoxelBase> m_overlappingVoxels = new List<MyVoxelBase>(); 
         private void FindConnectionsToWorld(HashSet<MySlimBlock> blocks)
         {
-            if (m_grid.Physics != null && m_grid.Physics.LinearVelocity.LengthSquared() > 0) //jn: TODO nicer
+            if (!m_grid.IsStatic || (m_grid.Physics != null && m_grid.Physics.LinearVelocity.LengthSquared() > 0)) //jn: TODO nicer
                 return;
             int counter = 0;
             ProfilerShort.Begin("FindConnectionsToWorld");
             var q = Quaternion.Identity;
+            var gridMat = m_grid.WorldMatrix;
+
+            var gaabb = m_grid.PositionComp.WorldAABB;
+            MyGamePruningStructure.GetAllVoxelMapsInBox(ref gaabb, m_overlappingVoxels);
+
             foreach (var b in blocks)
             {
                 var geometryBox = b.FatBlock.GetGeometryLocalBox();
                 Vector3 halfExtents = geometryBox.Size / 2;
 
+
                 Vector3D pos;
                 b.ComputeScaledCenter(out pos);
                 pos += geometryBox.Center;
-                pos = Vector3D.Transform(pos, m_grid.WorldMatrix);
+                pos = Vector3D.Transform(pos, gridMat);
 
                 Matrix blockMatrix;
                 b.Orientation.GetMatrix(out blockMatrix);
-                q = Quaternion.CreateFromRotationMatrix(blockMatrix * m_grid.WorldMatrix.GetOrientation());
+                q = Quaternion.CreateFromRotationMatrix(blockMatrix * gridMat.GetOrientation());
 
-                Sandbox.Engine.Physics.MyPhysics.GetPenetrationsBox(ref halfExtents, ref pos, ref q, m_penetrations, Sandbox.Engine.Physics.MyPhysics.CollideWithStaticLayer);
+                Sandbox.Engine.Physics.MyPhysics.GetPenetrationsBox(ref halfExtents, ref pos, ref q, m_penetrations, Sandbox.Engine.Physics.MyPhysics.CollisionLayers.CollideWithStaticLayer);
                 counter++;
                 bool isStatic = false;
                 foreach (var p in m_penetrations)
                 {
                     var e = p.GetCollisionEntity();
-                    if (e != null && e is MyVoxelMap)
+                    if (e != null && e is MyVoxelBase)
                     {
                         isStatic = true;
                         break;
                     }
                 }
 
+                if (!isStatic)
+                {
+                    BoundingBoxD blk = (BoundingBoxD)geometryBox + b.Position;
+
+                    foreach (var voxel in m_overlappingVoxels)
+                    {
+                        if (voxel.IsAnyAabbCornerInside(ref gridMat, blk))
+                        {
+                            isStatic = true;
+                            break;
+                        }
+                    }
+                }
+
+
                 m_penetrations.Clear();
                 if (isStatic && !BlocksConnectedToWorld.Contains(b.Position))
                 {
-                    isStatic = false;
+                    //isStatic = false;
                     m_blocksShapes[b.Position].GetChildren(m_shapeInfosList2);
                     for (int i = 0; i < m_shapeInfosList2.Count; i++)
                     {
@@ -522,7 +556,9 @@ namespace Sandbox.Game.Entities.Cube
                             child.Shape.GetChildren(m_shapeInfosList2);
                             continue;
                         }
-                        Vector4 min;
+                        child.Shape.SetFlagRecursively(HkdBreakableShape.Flags.IS_FIXED);
+                        
+                        /*Vector4 min;
                         Vector4 max;
                         child.Shape.GetShape().GetLocalAABB(0.01f, out min, out max);//.Transform(CubeGrid.PositionComp.WorldMatrix);
                         BoundingBox bb = new BoundingBox(new Vector3(min), new Vector3(max));
@@ -530,26 +566,33 @@ namespace Sandbox.Game.Entities.Cube
                         var bbd = bb.Transform(m_grid.WorldMatrix);
                         halfExtents = bbd.HalfExtents;
                         pos = bbd.Center;
-                        Sandbox.Engine.Physics.MyPhysics.GetPenetrationsBox(ref halfExtents, ref pos, ref q, m_penetrations, Sandbox.Engine.Physics.MyPhysics.CollideWithStaticLayer);
+                        Sandbox.Engine.Physics.MyPhysics.GetPenetrationsBox(ref halfExtents, ref pos, ref q, m_penetrations, Sandbox.Engine.Physics.MyPhysics.CollisionLayers.CollideWithStaticLayer);
                         counter++;
                         foreach (var p in m_penetrations)
                         {
                             var e = p.GetCollisionEntity();
-                            if (e != null && e is MyVoxelMap)
+                            if (e != null && e is MyVoxelBase)
                             {
                                 isStatic = true;
                                 child.Shape.SetFlagRecursively(HkdBreakableShape.Flags.IS_FIXED);
                                 break;
                             }
                         }
-                        m_penetrations.Clear();
+                        m_penetrations.Clear();*/
                     }
                     m_shapeInfosList2.Clear();
-                    if (isStatic)
-                        BlocksConnectedToWorld.Add(b.Position);
+                    //if (isStatic)
+                    BlocksConnectedToWorld.Add(b.Position);
                 }
             }
+
+            m_overlappingVoxels.Clear();
             ProfilerShort.End(counter);
+        }
+
+        public void FindConnectionsToWorld()
+        {
+            FindConnectionsToWorld(m_grid.GetBlocks());
         }
 
         public void RecalculateConnectionsToWorld(HashSet<MySlimBlock> blocks)
@@ -562,15 +605,14 @@ namespace Sandbox.Game.Entities.Cube
         }
 
         public HashSet<Vector3I> BlocksConnectedToWorld = new HashSet<Vector3I>();
-        public void CreateConnectionToWorld(HkdBreakableBody destructionBody)
+        public void CreateConnectionToWorld(HkdBreakableBody destructionBody, HkWorld havokWorld)
         {
             if (BlocksConnectedToWorld.Count == 0)
                 return;
             HkdFixedConnectivity conn = HkdFixedConnectivity.Create();
-            var voxelMap = MySession.Static.VoxelMaps.Instances.Single();
             foreach (var pos in BlocksConnectedToWorld)
             {
-                HkdFixedConnectivity.Connection c = new HkdFixedConnectivity.Connection(Vector3.Zero, Vector3.Up, 1, m_blocksShapes[pos].Shape, voxelMap.Physics.RigidBody, 0);
+                HkdFixedConnectivity.Connection c = new HkdFixedConnectivity.Connection(Vector3.Zero, Vector3.Up, 1, m_blocksShapes[pos].Shape, havokWorld.GetFixedBody(), 0);
                 conn.AddConnection(ref c);
                 c.RemoveReference();
             }
@@ -629,14 +671,40 @@ namespace Sandbox.Game.Entities.Cube
                     else
                         MyLog.Default.WriteLine("Child strength: " + child.Shape.GetStrenght());
                 }
+
+                MyLog.Default.WriteLine("Grid Blocks count: " + m_grid.GetBlocks().Count);
+                MyLog.Default.WriteLine("Grid MarkedForClose: " + m_grid.MarkedForClose);
+                HashSet<MyDefinitionId> blockDefinitions = new HashSet<MyDefinitionId>();
+                foreach (var block in m_grid.GetBlocks())
+                {
+                    if (block.FatBlock != null && block.FatBlock.MarkedForClose)
+                        MyLog.Default.WriteLine("Block marked for close: " + block.BlockDefinition.Id);
+
+                    if (blockDefinitions.Count >= 50)
+                        break;
+
+                    if (block.FatBlock is MyCompoundCubeBlock)
+                    {
+                        foreach (var blockInCompound in (block.FatBlock as MyCompoundCubeBlock).GetBlocks())
+                        {
+                            blockDefinitions.Add(blockInCompound.BlockDefinition.Id);
+                            if (blockInCompound.FatBlock != null && blockInCompound.FatBlock.MarkedForClose)
+                                MyLog.Default.WriteLine("Block in compound marked for close: " + blockInCompound.BlockDefinition.Id);
+                        }
+                    }
+                    else
+                        blockDefinitions.Add(block.BlockDefinition.Id);
+                }
+
+                foreach (var def in blockDefinitions)
+                    MyLog.Default.WriteLine("Block definition: " + def);
+
                 throw new InvalidOperationException();
             }
             ProfilerShort.End();
             ProfilerShort.Begin("Connect");
             CreateConnectionsManually(BreakableShape);
             ProfilerShort.End();
-            FindConnectionsToWorld(m_grid.GetBlocks());
-
             m_shapeInfosList.Clear();
             ProfilerShort.End();
             return BreakableShape;
@@ -644,7 +712,7 @@ namespace Sandbox.Game.Entities.Cube
 
         private static bool HasBreakableShape(string model, MyCubeBlockDefinition block)
         {
-            var modelData = MyModels.GetModelOnlyData(model);
+            var modelData = VRage.Game.Models.MyModels.GetModelOnlyData(model);
             return modelData != null && modelData.HavokBreakableShapes != null && modelData.HavokBreakableShapes.Length > 0;
         }
 
@@ -653,11 +721,11 @@ namespace Sandbox.Game.Entities.Cube
         /// </summary>
         /// <param name="block"></param>
         /// <returns>Cloned shape</returns>
-        private static HkdBreakableShape GetBreakableShape(string model, MyCubeBlockDefinition block)
+        private static HkdBreakableShape GetBreakableShape(string model, MyCubeBlockDefinition block, bool forceLoadDestruction = false)
         {
-            if (MyFakes.LAZY_LOAD_DESTRUCTION)
+            if (MyFakes.LAZY_LOAD_DESTRUCTION || forceLoadDestruction)
             {
-                var data = MyModels.GetModelOnlyData(model);
+                var data = VRage.Game.Models.MyModels.GetModelOnlyData(model);
                 if (data.HavokBreakableShapes == null)
                 {
                     MyDestructionData.Static.LoadModelDestruction(model, block, data.BoundingBoxSize);
@@ -707,6 +775,12 @@ namespace Sandbox.Game.Entities.Cube
                         var defId = block.FatBlock.BlockDefinition;
                         Matrix m;
                         var model = block.CalculateCurrentModel(out m);
+                        if (!MyFakes.LAZY_LOAD_DESTRUCTION && !HasBreakableShape(model, defId))
+                        {
+                            MySandboxGame.Log.WriteLine("Breakable shape not preallocated: " + model + " definition: " + defId);
+                            GetBreakableShape(model, defId, forceLoadDestruction: true);
+                        }
+
                         if (MyFakes.LAZY_LOAD_DESTRUCTION || HasBreakableShape(model, defId))
                         {
                             ProfilerShort.Begin("Clone");
@@ -755,6 +829,13 @@ namespace Sandbox.Game.Entities.Cube
                             var blockDef = block.BlockDefinition;
                             Matrix m;
                             var model = block.CalculateCurrentModel(out m);
+
+                            if (!MyFakes.LAZY_LOAD_DESTRUCTION && !HasBreakableShape(model, blockDef))
+                            {
+                                MySandboxGame.Log.WriteLine("Breakable shape not preallocated: " + model + " definition: " + blockDef);
+                                GetBreakableShape(model, blockDef, forceLoadDestruction: true);
+                            }
+
                             if (MyFakes.LAZY_LOAD_DESTRUCTION || HasBreakableShape(model, blockDef))
                             {
                                 ProfilerShort.Begin("Clone");
@@ -855,6 +936,12 @@ namespace Sandbox.Game.Entities.Cube
                     }
                     else
                     {
+                        if (!MyFakes.LAZY_LOAD_DESTRUCTION && !HasBreakableShape(model, b.BlockDefinition))
+                        {
+                            MySandboxGame.Log.WriteLine("Breakable shape not preallocated: " + model + " definition: " + b.BlockDefinition);
+                            GetBreakableShape(model, b.BlockDefinition, forceLoadDestruction: true);
+                        }
+
                         if (MyFakes.LAZY_LOAD_DESTRUCTION || HasBreakableShape(model, b.BlockDefinition))
                         {
                             ProfilerShort.Begin("Clone");
@@ -868,6 +955,21 @@ namespace Sandbox.Game.Entities.Cube
             ProfilerShort.Begin("Property");
             HkPropertyBase posProp = new HkVec3IProperty(b.Position);
             Debug.Assert(breakableShape.IsValid());
+            if (!breakableShape.IsValid())
+            {
+                MySandboxGame.Log.WriteLine("BreakableShape not valid: " + b.BlockDefinition.Id + " pos: " + b.Min + " grid cubes: " + b.CubeGrid.BlocksCount);
+                if (b.FatBlock is MyCompoundCubeBlock)
+                {
+                    var compoundBlock = b.FatBlock as MyCompoundCubeBlock;
+                    MySandboxGame.Log.WriteLine("Compound blocks count: " + compoundBlock.GetBlocksCount());
+
+                    foreach (var blockInCompound in compoundBlock.GetBlocks()) 
+                    {
+                        MySandboxGame.Log.WriteLine("Block in compound: " + blockInCompound.BlockDefinition.Id);
+                    }
+                }
+            }
+
             breakableShape.SetPropertyRecursively(HkdBreakableShape.PROPERTY_GRID_POSITION, posProp);
             posProp.RemoveReference();
             ProfilerShort.End();
@@ -1063,21 +1165,26 @@ namespace Sandbox.Game.Entities.Cube
             ProfilerShort.End();
         }
 
+        static object m_sharedParentLock = new object();
+
         public static void ConnectShapesWithChildren(HkdBreakableShape parent, HkdBreakableShape shapeA, HkdBreakableShape shapeB)
         {
-            var c = CreateConnection(shapeA, shapeB, shapeA.CoM, shapeB.CoM);
-            //parent.AddConnection(ref c);
-            c.AddToCommonParent();
-            c.RemoveReference();
-            shapeB.GetChildren(m_shapeInfosList3);
-            foreach (var child in m_shapeInfosList3)
+            lock (m_sharedParentLock)
             {
-                var c2 = CreateConnection(shapeA, child.Shape, shapeA.CoM, shapeB.CoM);
-                //parent.AddConnection(ref c2);
-                c2.AddToCommonParent();
-                c2.RemoveReference();
+                var c = CreateConnection(shapeA, shapeB, shapeA.CoM, shapeB.CoM);
+                //parent.AddConnection(ref c);
+                c.AddToCommonParent();
+                c.RemoveReference();
+                shapeB.GetChildren(m_shapeInfosList3);
+                foreach (var child in m_shapeInfosList3)
+                {
+                    var c2 = CreateConnection(shapeA, child.Shape, shapeA.CoM, shapeB.CoM);
+                    //parent.AddConnection(ref c2);
+                    c2.AddToCommonParent();
+                    c2.RemoveReference();
+                }
+                m_shapeInfosList3.Clear();
             }
-            m_shapeInfosList3.Clear();
         }
 
         private static HkdConnection CreateConnection(HkdBreakableShape aShape, HkdBreakableShape bShape, Vector3 pivotA, Vector3 pivotB)
@@ -1093,7 +1200,7 @@ namespace Sandbox.Game.Entities.Cube
 
         private void UpdateMass(HkRigidBody rigidBody, bool setMass = true)
         {
-            if (!m_grid.IsStatic && !rigidBody.IsFixed && rigidBody.GetMotionType() != HkMotionType.Keyframed)
+            if (rigidBody.GetMotionType() != HkMotionType.Keyframed)
             {
                 ProfilerShort.Begin("Update mass");
                 if (!MyPerGameSettings.Destruction)
@@ -1103,10 +1210,10 @@ namespace Sandbox.Game.Entities.Cube
                 ProfilerShort.Begin("Set mass");
                 if (setMass)
                 {
-                    if (m_grid.Physics.IsWelded || m_grid.Physics.WeldInfo.Children.Count != 0)
+                    if (m_grid.Physics.IsWelded || m_grid.GetPhysicsBody().WeldInfo.Children.Count != 0)
                     {
-                        m_grid.Physics.WeldedRigidBody.SetMassProperties(ref m_massProperties);
-                        m_grid.Physics.WeldInfo.SetMassProps(m_massProperties);
+                        m_grid.GetPhysicsBody().WeldedRigidBody.SetMassProperties(ref m_massProperties);
+                        m_grid.GetPhysicsBody().WeldInfo.SetMassProps(m_massProperties);
                         m_grid.Physics.UpdateMassProps();
                     }
                     else
@@ -1162,50 +1269,75 @@ namespace Sandbox.Game.Entities.Cube
 
         public void UpdateMassFromInventories(HashSet<MySlimBlock> blocks, MyPhysicsBody rb)
         {
-            if (rb.RigidBody.IsFixedOrKeyframed)
+            if (!rb.RigidBody.IsFixed && rb.RigidBody.IsFixedOrKeyframed)
                 return;
 
-			float cargoMassMultiplier = MySession.Static.Settings.InventorySizeMultiplier;
+            float cargoMassMultiplier = 1f / MySession.Static.Settings.InventorySizeMultiplier;
+
+            if (MyFakes.ENABLE_STATIC_INVENTORY_MASS)
+                cargoMassMultiplier = 0;
+
             ProfilerShort.Begin("GridShape.UpdateMassFromInv");
             foreach (var block in blocks)
             {
-                var owner = block.FatBlock as IMyInventoryOwner;
+                var owner = (block.FatBlock != null && block.FatBlock.HasInventory) ? block.FatBlock : null;
                 float mass = 0;
 
-				if (owner == null)
+                if (owner == null)
 				{
 					var cockpit = block.FatBlock as MyCockpit;
 					if(cockpit == null || cockpit.Pilot == null)
 						continue;
 
-					mass = cockpit.Pilot.BaseMass + (float)cockpit.Pilot.Inventory.CurrentMass / cargoMassMultiplier;
-				}
-				else
-				{
-					for (int i = 0; i < owner.InventoryCount; i++)
-					{
-						mass += (float)owner.GetInventory(i).CurrentMass / cargoMassMultiplier;
-					}
-				}
+                    mass += cockpit.Pilot.BaseMass;
+                    if (cockpit.Pilot.HasInventory)
+                    {
+                        var pilotInventory = cockpit.Pilot.GetInventory();
+                        if (pilotInventory != null)
+                        {
+                            mass += (float)pilotInventory.CurrentMass * cargoMassMultiplier;
+                        }
+                        else
+                        {
+                            Debug.Fail("Pilot.HasInventory returns true, but Inventory property is null?!");
+                        }
+
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < owner.InventoryCount; i++)
+                    {
+                        var inventory = owner.GetInventory(i);
+                        if (inventory != null)
+                        {
+                            mass += (float)inventory.CurrentMass * cargoMassMultiplier;
+                        }
+                        else
+                        {
+                            Debug.Fail("Owner returns InventoryCount higher than 0, but on GetInventory(index) returns null?!");
+                        }
+                    }
+                }
                 var size = (block.Max - block.Min + Vector3I.One) * block.CubeGrid.GridSize;
                 var center = (block.Min + block.Max) * 0.5f * block.CubeGrid.GridSize;
                 HkMassProperties massProperties = new HkMassProperties();
-                massProperties = HkInertiaTensorComputer.ComputeBoxVolumeMassProperties(size / 2, (MyPerGameSettings.Destruction ?  MyDestructionHelper.MassToHavok(mass) : mass));
-                m_tmpElements.Add(new HkMassElement() { Properties = massProperties, Tranform = Matrix.CreateTranslation(center) });
+                massProperties = HkInertiaTensorComputer.ComputeBoxVolumeMassProperties(size / 2, (MyPerGameSettings.Destruction ? MyDestructionHelper.MassToHavok(mass) : mass));
+                TmpElements.Add(new HkMassElement() { Properties = massProperties, Tranform = Matrix.CreateTranslation(center) });
             }
             HkMassProperties originalMp = new HkMassProperties();
-			if (MyPerGameSettings.Destruction)
-			{
-				Debug.Assert(BreakableShape.IsValid(), "This routine works with breakable shape mass properties.");
-				BreakableShape.BuildMassProperties(ref originalMp);
-				m_tmpElements.Add(new HkMassElement() { Properties = originalMp, Tranform = Matrix.Identity });
-			}
-			else
-			{
-				m_tmpElements.Add(new HkMassElement() { Properties = m_originalMassProperties, Tranform = Matrix.Identity });
-			}
-            m_massProperties = HkInertiaTensorComputer.CombineMassProperties(m_tmpElements);
-            m_tmpElements.Clear();
+            if (MyPerGameSettings.Destruction)
+            {
+                Debug.Assert(BreakableShape.IsValid(), "This routine works with breakable shape mass properties.");
+                BreakableShape.BuildMassProperties(ref originalMp);
+                TmpElements.Add(new HkMassElement() { Properties = originalMp, Tranform = Matrix.Identity });
+            }
+            else
+            {
+                TmpElements.Add(new HkMassElement() { Properties = m_originalMassProperties, Tranform = Matrix.Identity });
+            }
+            m_massProperties = HkInertiaTensorComputer.CombineMassProperties(TmpElements);
+            TmpElements.Clear();
             if (rb.IsWelded || rb.WeldInfo.Children.Count != 0)
             {
                 rb.WeldedRigidBody.SetMassProperties(ref m_massProperties);
@@ -1253,7 +1385,7 @@ namespace Sandbox.Game.Entities.Cube
                 }
             }
 
-            if (Sandbox.Game.Gui.MyHonzaInputComponent.ShowRealBlockMass == Gui.MyHonzaInputComponent.ShownMassEnum.None)
+            if (Sandbox.Game.Gui.MyHonzaInputComponent.DefaultComponent.ShowRealBlockMass == Gui.MyHonzaInputComponent.DefaultComponent.ShownMassEnum.None)
                 return;
             if ((m_grid.PositionComp.GetPosition() - MySector.MainCamera.Position).Length() > 20 + m_grid.PositionComp.WorldVolume.Radius)
                 return;
@@ -1267,12 +1399,12 @@ namespace Sandbox.Game.Entities.Cube
                 float mass = block.GetMass();
                 if (block.FatBlock is MyFracturedBlock)
                     mass = m_blocksShapes[block.Position].Shape.GetMass();
-                switch (Sandbox.Game.Gui.MyHonzaInputComponent.ShowRealBlockMass)
+                switch (Sandbox.Game.Gui.MyHonzaInputComponent.DefaultComponent.ShowRealBlockMass)
                 {
-                    case Gui.MyHonzaInputComponent.ShownMassEnum.Real:
+                    case Gui.MyHonzaInputComponent.DefaultComponent.ShownMassEnum.Real:
                         mass = MyDestructionHelper.MassFromHavok(mass);
                         break;
-                    case Gui.MyHonzaInputComponent.ShownMassEnum.SI:
+                    case Gui.MyHonzaInputComponent.DefaultComponent.ShownMassEnum.SI:
                         mass = MyDestructionHelper.MassFromHavok(mass);
                         mass = Sandbox.Game.GameSystems.StructuralIntegrity.MyAdvancedStaticSimulator.MassToSI(mass);
                         break;
@@ -1281,6 +1413,20 @@ namespace Sandbox.Game.Entities.Cube
                 }
                 VRageRender.MyRenderProxy.DebugDrawText3D(position, MyValueFormatter.GetFormatedFloat(mass, (mass < 10 ? 2 : 0)), Color.White, 0.6f, false, MyGuiDrawAlignEnum.HORISONTAL_CENTER_AND_VERTICAL_CENTER);
             }
+        }
+
+        // Remove shapes from a block directly.
+        internal void RemoveBlock(MySlimBlock block)
+        {
+            m_tmpRemovedCubes.Add(block.Min);
+
+            m_root.RemoveShapes(m_tmpRemovedCubes, null, null, null);
+            m_tmpRemovedCubes.Clear();
+        }
+
+        internal void SetDisabledBlocks(Dictionary<MySlimBlock, int> lastCubeChange)
+        {
+            m_blockCollector.DisabledBlocks = lastCubeChange;
         }
     }
 }

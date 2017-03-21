@@ -1,10 +1,10 @@
-﻿using Sandbox.Common.ObjectBuilders.Gui;
-using Sandbox.Graphics.GUI;
+﻿using Sandbox.Graphics.GUI;
 using System;
 using System.Globalization;
 using System.IO;
 using System.Text;
 using VRage.FileSystem;
+using VRage.Game;
 using VRage.Input;
 using VRage.Library.Utils;
 using VRage.ObjectBuilders;
@@ -91,6 +91,8 @@ namespace Sandbox.Graphics.GUI
             m_cancelButton.TextAlignment = MyGuiDrawAlignEnum.HORISONTAL_CENTER_AND_VERTICAL_CENTER;
 
             RefreshAmountTextbox();
+            //GR: in int have all text selected
+            m_amountTextbox.SelectAll();
         }
 
         public override void HandleUnhandledInput(bool receivedFocusInThisUpdate)

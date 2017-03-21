@@ -7,7 +7,11 @@ using Sandbox.Game.Entities;
 using Sandbox.Game.World;
 using VRage.Collections;
 using VRage.Utils;
-using VRage.Components;
+using VRage.Game.Components;
+using Sandbox.Common;
+using System.Text;
+using VRage.Game.Entity;
+using VRage.Game;
 
 namespace Sandbox.Game.EntityComponents
 {
@@ -47,7 +51,10 @@ namespace Sandbox.Game.EntityComponents
 	    private PerTypeData[] m_dataPerType;
 	    private bool m_enabled;
 
-	    private static readonly List<MyResourceSourceInfo> m_singleHelperList = new List<MyResourceSourceInfo>(); 
+        private readonly StringBuilder m_textCache = new StringBuilder();
+
+        [ThreadStatic]
+	    private static List<MyResourceSourceInfo> m_singleHelperList = new List<MyResourceSourceInfo>(); 
 
 		public MyStringHash Group { get; private set; }
 
@@ -56,7 +63,9 @@ namespace Sandbox.Game.EntityComponents
 		public float DefinedOutput { get { return DefinedOutputByType(m_resourceTypeToIndex.Keys.First()); } }
 	    public bool ProductionEnabled { get { return ProductionEnabledByType(m_resourceTypeToIndex.Keys.First()); } }
 
+        //How much resource is filled actually (usedratio * Capacity)
 		public float RemainingCapacity { get { return RemainingCapacityByType(m_resourceTypeToIndex.Keys.First()); } }
+
 		public bool IsInfiniteCapacity { get { return float.IsInfinity(RemainingCapacity); } }
 	    public float ProductionToCapacityMultiplier { get { return ProductionToCapacityMultiplierByType(m_resourceTypeToIndex.Keys.First()); } }
 	    public bool Enabled { get { return m_enabled; } set { SetEnabled(value); } }
@@ -66,8 +75,8 @@ namespace Sandbox.Game.EntityComponents
 			get { return HasCapacityRemainingByType(m_resourceTypeToIndex.Keys.First()); }
 		}
 
-		private readonly Dictionary<MyDefinitionId, int> m_resourceTypeToIndex = new Dictionary<MyDefinitionId, int>(); 
-		private readonly List<MyDefinitionId> m_resourceIds = new List<MyDefinitionId>(1);
+		private readonly Dictionary<MyDefinitionId, int> m_resourceTypeToIndex = new Dictionary<MyDefinitionId, int>(1, MyDefinitionId.Comparer);
+        private readonly List<MyDefinitionId> m_resourceIds = new List<MyDefinitionId>(1);
 		public ListReader<MyDefinitionId> ResourceTypes { get { return new ListReader<MyDefinitionId>(m_resourceIds); } }
 
 		public MyResourceSourceComponent(int initialAllocationSize = 1)
@@ -77,6 +86,7 @@ namespace Sandbox.Game.EntityComponents
 
 	    public void Init(MyStringHash sourceGroup, MyResourceSourceInfo sourceResourceData)
 	    {
+            MyUtils.Init(ref m_singleHelperList);
 	        m_singleHelperList.Add(sourceResourceData);
             Init(sourceGroup, m_singleHelperList);
             m_singleHelperList.Clear();
@@ -175,11 +185,11 @@ namespace Sandbox.Game.EntityComponents
 
 	    private float MaxOutputLimitedByCapacity(int typeIndex)
 	    {
-	        return Math.Min(m_dataPerType[typeIndex].MaxOutput, m_dataPerType[typeIndex].RemainingCapacity*m_dataPerType[typeIndex].ProductionToCapacityMultiplier);
+	        return Math.Min(m_dataPerType[typeIndex].MaxOutput, m_dataPerType[typeIndex].RemainingCapacity*m_dataPerType[typeIndex].ProductionToCapacityMultiplier*MyEngineConstants.UPDATE_STEPS_PER_SECOND);
 	    }
 
-		internal void SetMaxOutput(float newMaxOutput) { SetMaxOutputByType(m_resourceTypeToIndex.Keys.First(), newMaxOutput); }
-		internal void SetMaxOutputByType(MyDefinitionId resourceTypeId, float newMaxOutput)
+		public void SetMaxOutput(float newMaxOutput) { SetMaxOutputByType(m_resourceTypeToIndex.Keys.First(), newMaxOutput); }
+		public void SetMaxOutputByType(MyDefinitionId resourceTypeId, float newMaxOutput)
 		{
 			var typeIndex = GetTypeIndex(resourceTypeId);
 			if (m_dataPerType[typeIndex].MaxOutput != newMaxOutput)
@@ -217,6 +227,9 @@ namespace Sandbox.Game.EntityComponents
                 m_dataPerType[typeIndex].HasRemainingCapacity = newHasCapacity;
 				if (HasCapacityRemainingChanged != null)
 					HasCapacityRemainingChanged(resourceTypeId, this);
+
+                if (!newHasCapacity)
+                    m_dataPerType[typeIndex].CurrentOutput = 0f;
 			}
 		}
 
@@ -240,19 +253,22 @@ namespace Sandbox.Game.EntityComponents
 
 	    private void SetEnabled(bool newValue)
 	    {
+            bool oldValue = m_enabled;
+
 	        m_enabled = newValue;
 
-	        if (ProductionEnabledChanged != null)
-	        {
-	            foreach (var resourceId in m_resourceIds)
-	                ProductionEnabledChanged(resourceId, this);
-	        }
+            if (oldValue != m_enabled)
+            {
+                foreach (var resourceId in m_resourceIds)
+                    if (ProductionEnabledChanged != null)
+                        ProductionEnabledChanged(resourceId, this);
 
-	        if (!m_enabled)
-	        {
-                foreach(var resourceId in m_resourceIds)
-	                SetOutputByType(resourceId, 0f);
-	        }
+                if (!m_enabled)
+                {
+                    foreach (var resourceId in m_resourceIds)
+                        SetOutputByType(resourceId, 0f);
+                }
+            }
 	    }
 
 		protected int GetTypeIndex(MyDefinitionId resourceTypeId)
@@ -262,6 +278,17 @@ namespace Sandbox.Game.EntityComponents
 				typeIndex = m_resourceTypeToIndex[resourceTypeId];
 			return typeIndex;
 		}
+
+        public override string ToString()
+        {
+            const string separator = "; \n";
+            m_textCache.Clear();
+            m_textCache.AppendFormat("Enabled: {0}", Enabled).Append(separator);
+            m_textCache.Append("Output: "); MyValueFormatter.AppendWorkInBestUnit(CurrentOutput, m_textCache); m_textCache.Append(separator);
+            m_textCache.Append("Max Output: "); MyValueFormatter.AppendWorkInBestUnit(MaxOutput, m_textCache); m_textCache.Append(separator);
+            m_textCache.AppendFormat("ProductionEnabled: {0}", ProductionEnabled);
+            return m_textCache.ToString();
+        }
 
 		public override string ComponentTypeDebugString { get { return "Resource Source"; } }
 	}

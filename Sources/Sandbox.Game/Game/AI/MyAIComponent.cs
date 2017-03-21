@@ -25,6 +25,10 @@ using VRage.Utils;
 using VRage.Win32;
 using VRageMath;
 using VRage.Collections;
+using VRage.Game;
+using VRage.Game.Components;
+using VRage.Profiler;
+using Havok;
 
 namespace Sandbox.Game.AI
 {
@@ -68,14 +72,12 @@ namespace Sandbox.Game.AI
         }
 
         private MyBotCollection m_botCollection;
-        private MyPathfinding m_pathfinding;
+        private IMyPathfinding m_pathfinding;
         private MyBehaviorTreeCollection m_behaviorTreeCollection;
 
         public MyBotCollection Bots { get { return m_botCollection; } }
-        public MyPathfinding Pathfinding { get { return m_pathfinding; } }
+        public IMyPathfinding Pathfinding { get { return m_pathfinding; } }
         public MyBehaviorTreeCollection BehaviorTrees { get { return m_behaviorTreeCollection; } }
-
-        public MyRandom Random;
 
         private Dictionary<int, MyObjectBuilder_Bot> m_loadedBotObjectBuildersByHandle;
         private List<int> m_loadedLocalPlayers;
@@ -88,13 +90,21 @@ namespace Sandbox.Game.AI
         private Dictionary<int, AgentSpawnData> m_agentsToSpawn;
 
         private MyHudNotification m_maxBotNotification;
+        private bool m_debugDrawPathfinding = false;
+
 
         public MyAgentDefinition BotToSpawn = null;
         public MyAiCommandDefinition CommandDefinition = null;
 
         public event Action<int, MyBotDefinition> BotCreatedEvent;
 
-        private MyConcurrentQueue<int> m_removeQueue;
+        private struct BotRemovalRequest
+        {
+            public int SerialId;
+            public bool RemoveCharacter;
+        }
+
+        private MyConcurrentQueue<BotRemovalRequest> m_removeQueue;
         private MyConcurrentQueue<AgentSpawnData> m_processQueue;
         private FastResourceLock m_lock;
 
@@ -102,7 +112,6 @@ namespace Sandbox.Game.AI
         {
             Static = this;
             BotFactory = Activator.CreateInstance(MyPerGameSettings.BotFactoryType) as MyBotFactoryBase;
-            Random = new MyRandom();
         }
 
         public override void LoadData()
@@ -120,23 +129,28 @@ namespace Sandbox.Game.AI
                     Sync.Players.PlayerRequesting += Players_PlayerRequesting;
                 }
 
-                m_pathfinding = new MyPathfinding();
+                if (MyPerGameSettings.PathfindingType != null)
+                {
+                    m_pathfinding = Activator.CreateInstance(MyPerGameSettings.PathfindingType) as IMyPathfinding;
+                }
                 m_behaviorTreeCollection = new MyBehaviorTreeCollection();
                 m_botCollection = new MyBotCollection(m_behaviorTreeCollection);
                 m_loadedLocalPlayers = new List<int>();
                 m_loadedBotObjectBuildersByHandle = new Dictionary<int, MyObjectBuilder_Bot>();
                 m_agentsToSpawn = new Dictionary<int, AgentSpawnData>();
-                m_removeQueue = new MyConcurrentQueue<int>();
-                m_maxBotNotification = new MyHudNotification(MySpaceTexts.NotificationMaximumNumberBots, 2000, MyFontEnum.Red);
+                m_removeQueue = new MyConcurrentQueue<BotRemovalRequest>();
+                m_maxBotNotification = new MyHudNotification(MyCommonTexts.NotificationMaximumNumberBots, 2000, MyFontEnum.Red);
                 m_processQueue = new MyConcurrentQueue<AgentSpawnData>();
                 m_lock = new FastResourceLock();
 
+#if !XB1
                 if (MyFakes.ENABLE_BEHAVIOR_TREE_TOOL_COMMUNICATION)
                 {
                     MyMessageLoop.AddMessageHandler(MyWMCodes.BEHAVIOR_GAME_UPLOAD_TREE, OnUploadNewTree);
                     MyMessageLoop.AddMessageHandler(MyWMCodes.BEHAVIOR_GAME_STOP_SENDING, OnBreakDebugging);
                     MyMessageLoop.AddMessageHandler(MyWMCodes.BEHAVIOR_GAME_RESUME_SENDING, OnResumeDebugging);
                 }
+#endif
 
                 MyToolbarComponent.CurrentToolbar.SelectedSlotChanged += CurrentToolbar_SelectedSlotChanged;
                 MyToolbarComponent.CurrentToolbar.SlotActivated += CurrentToolbar_SlotActivated;
@@ -161,6 +175,7 @@ namespace Sandbox.Game.AI
 
             var ob = (MyObjectBuilder_AIComponent)sessionComponentBuilder;
 
+            if (ob.BotBrains != null)
             foreach (var brain in ob.BotBrains)
             {
                 m_loadedBotObjectBuildersByHandle[brain.PlayerHandle] = brain.BotBrain;
@@ -179,7 +194,11 @@ namespace Sandbox.Game.AI
                     MyObjectBuilder_Bot botBuilder = null;
                     m_loadedBotObjectBuildersByHandle.TryGetValue(playerNumber, out botBuilder);
 
-                    CreateBot(playerNumber, botBuilder);
+                    Debug.Assert(botBuilder == null || botBuilder.TypeId == botBuilder.BotDefId.TypeId, "Bot types don't match! Are you loading an old save?");
+                    if ((botBuilder == null || botBuilder.TypeId == botBuilder.BotDefId.TypeId))
+                    {
+                        CreateBot(playerNumber, botBuilder);
+                    }
                 }
 
                 m_loadedLocalPlayers.Clear();
@@ -200,15 +219,115 @@ namespace Sandbox.Game.AI
             {
                 // Pathfinding should be updated before the bots are simulated, so that the changes
                 // in meshes and voxels are reflected in the new meshes if the bots want to do some pathfinding
-                m_pathfinding.Update();
+                if (MyFakes.DEBUG_ONE_VOXEL_PATHFINDING_STEP_SETTING)
+                {
+                    if (!MyFakes.DEBUG_ONE_VOXEL_PATHFINDING_STEP)
+                        // voxel pathfinding step isn't allowed - it disables also other AI stuff
+                        return;
+                }
+                else
+                {
+                    if (MyFakes.DEBUG_ONE_AI_STEP_SETTING)
+                        if (!MyFakes.DEBUG_ONE_AI_STEP)
+                            // AI step isn't allowed
+                            return;
+                        else
+                            // disable next AI step - and do one
+                            MyFakes.DEBUG_ONE_AI_STEP = false;
+                }
 
-                ProfilerShort.Begin("MyAIComponent.Simulate()");
+                MySimpleProfiler.Begin("AI");
+                if (m_pathfinding != null)
+					m_pathfinding.Update();
+				ProfilerShort.Begin("MyAIComponent.Simulate()");
                 base.Simulate();
                 m_behaviorTreeCollection.Update();
                 m_botCollection.Update();
 
                 ProfilerShort.End();
+                MySimpleProfiler.End("AI");
             }
+        }
+
+        public void PathfindingSetDrawDebug(bool drawDebug)
+        {
+            m_debugDrawPathfinding = drawDebug;
+        }
+
+        public void PathfindingSetDrawNavmesh(bool drawNavmesh)
+        {
+            MyRDPathfinding pf = m_pathfinding as MyRDPathfinding;
+            if (pf != null)
+                pf.SetDrawNavmesh(drawNavmesh);
+        }
+
+        public Vector3D? DebugTarget
+        { get; private set; }
+
+
+        public void GenerateNavmeshTile(Vector3D? target)
+        {
+            if (target.HasValue)
+            {
+                Vector3D point = target.Value + 0.1f;
+                MyDestinationSphere destSphere = new MyDestinationSphere(ref point, 1);
+
+                var path = Static.Pathfinding.FindPathGlobal(target.Value - 0.1f, destSphere, null);
+                Vector3D nextPosition;
+                float targetRadius;
+                VRage.ModAPI.IMyEntity entity;
+                path.GetNextTarget(target.Value, out nextPosition, out targetRadius, out entity);
+            }
+
+            DebugTarget = target;
+        }
+
+        public void InvalidateNavmeshPosition(Vector3D? target)
+        {
+            if (target.HasValue)
+            {
+                var pathfinding = (MyRDPathfinding)Static.Pathfinding;
+                if(pathfinding != null)
+                {
+                    BoundingBoxD box = new BoundingBoxD(target.Value - 0.1, target.Value + 0.1);
+                    pathfinding.InvalidateArea(box);
+                }
+            }
+
+            DebugTarget = target;
+        }
+        
+
+        BoundingBoxD m_debugTargetAABB;
+        public void SetPathfindingDebugTarget(Vector3D? target)
+        {
+            MyExternalPathfinding pf = m_pathfinding as MyExternalPathfinding;
+            if (pf != null)
+                pf.SetTarget(target);
+            else
+            {
+                if (target.HasValue)
+                {
+                    //TODO: Just for debug purpose... Anything can be implemented
+
+                    m_debugTargetAABB = new MyOrientedBoundingBoxD(target.Value, new Vector3D(5, 5, 5), Quaternion.Identity).GetAABB();
+                    List<VRage.Game.Entity.MyEntity> entities = new List<VRage.Game.Entity.MyEntity>();
+                    MyGamePruningStructure.GetAllEntitiesInBox(ref m_debugTargetAABB, entities);
+                }
+            }
+
+            DebugTarget = target;
+        }
+
+
+        private void DrawDebugTarget()
+        {
+            if (DebugTarget != null)
+            {
+                VRageRender.MyRenderProxy.DebugDrawSphere(DebugTarget.Value, 0.2f, Color.Red, 0, false);
+                VRageRender.MyRenderProxy.DebugDrawAABB(m_debugTargetAABB, Color.Green);
+            }
+
         }
 
         public override void UpdateAfterSimulation()
@@ -217,7 +336,7 @@ namespace Sandbox.Game.AI
 
             if (MyPerGameSettings.EnableAi)
             {
-                PerformBotRemovals(false);
+                PerformBotRemovals();
 
                 AgentSpawnData newBotData;
                 while (m_processQueue.TryDequeue(out newBotData))
@@ -227,8 +346,12 @@ namespace Sandbox.Game.AI
                 }
 
                 ProfilerShort.Begin("Debug draw");
-                m_pathfinding.DebugDraw();
+                if (m_debugDrawPathfinding && m_pathfinding != null) 
+                    m_pathfinding.DebugDraw();
+      
                 m_botCollection.DebugDraw();
+                DebugDrawBots();
+                DrawDebugTarget();
                 ProfilerShort.End();
             }
         }
@@ -249,18 +372,21 @@ namespace Sandbox.Game.AI
                     Sync.Players.PlayerRemoved -= Players_PlayerRemoved;
                 }
 
-                m_pathfinding.UnloadData();
+                if (m_pathfinding != null) 
+					m_pathfinding.UnloadData();
                 m_botCollection.UnloadData();
 
                 m_botCollection = null;
                 m_pathfinding = null;
 
+#if !XB1
                 if (MyFakes.ENABLE_BEHAVIOR_TREE_TOOL_COMMUNICATION)
                 {
                     MyMessageLoop.RemoveMessageHandler(MyWMCodes.BEHAVIOR_GAME_UPLOAD_TREE, OnUploadNewTree);
                     MyMessageLoop.RemoveMessageHandler(MyWMCodes.BEHAVIOR_GAME_STOP_SENDING, OnBreakDebugging);
                     MyMessageLoop.RemoveMessageHandler(MyWMCodes.BEHAVIOR_GAME_RESUME_SENDING, OnResumeDebugging);
                 }
+#endif
 
                 if (MyToolbarComponent.CurrentToolbar != null)
                 {
@@ -293,9 +419,9 @@ namespace Sandbox.Game.AI
             return SpawnNewBotInternal(agentDefinition, spawnPosition, false);
         }
 
-        public int SpawnNewBot(MyAgentDefinition agentDefinition, Vector3D position)
+        public int SpawnNewBot(MyAgentDefinition agentDefinition, Vector3D position, bool createdByPlayer = true)
         {
-            return SpawnNewBotInternal(agentDefinition, position, true);
+            return SpawnNewBotInternal(agentDefinition, position, createdByPlayer);
         }
 
         public bool SpawnNewBotGroup(string type, List<AgentGroupData> groupData, List<int> outIds)
@@ -352,11 +478,9 @@ namespace Sandbox.Game.AI
                 return false;
             }
 
-            if (MyFakes.ENABLE_BRAIN_SIMULATOR) return true;
-
             if (MyFakes.DEVELOPMENT_PRESET) return true;
 
-            if (MySteam.UserId == pid.SteamId)
+            if (Sync.MyId == pid.SteamId)
             {
                 AgentSpawnData spawnData = default(AgentSpawnData);
                 if (m_agentsToSpawn.TryGetValue(pid.SerialId, out spawnData))
@@ -421,7 +545,7 @@ namespace Sandbox.Game.AI
 
         void PlayerCreated(int playerNumber)
         {
-            if (playerNumber == 0 || MyFakes.ENABLE_BRAIN_SIMULATOR)
+            if (playerNumber == 0)
                 return;
             CreateBot(playerNumber);
         }
@@ -496,6 +620,10 @@ namespace Sandbox.Game.AI
             var createdByPlayer = false;
             MyBotDefinition botDefinition = null;
             AgentSpawnData spawnData = default(AgentSpawnData);
+
+            // We have to get the bot object builder and bot definition somehow
+            // Either, the bot is being spawned on this computer and the definition was saved in the spawn data
+            // or the bot is just being created from the object builder (MP bot creation, etc.), so the definition is there
             if (isBotSpawned)
             {
                 spawnData = m_agentsToSpawn[playerNumber];
@@ -505,11 +633,17 @@ namespace Sandbox.Game.AI
             }
             else
             {
-                Debug.Assert(botBuilder != null && !botBuilder.BotDefId.TypeId.IsNull, "Null or invalid bot builder. Bot is not going to be created");
                 if (botBuilder == null || botBuilder.BotDefId.TypeId.IsNull)
+                {
+                    MyPlayer missingBotPlayer = null;
+                    if (Sync.Players.TryGetPlayerById(new MyPlayer.PlayerId(Sync.MyId, playerNumber), out missingBotPlayer))
+                    {
+                        Sync.Players.RemovePlayer(missingBotPlayer);
+                    }
                     return;
+                }
 
-                botDefinition = MyDefinitionManager.Static.GetBotDefinition(botBuilder.BotDefId);
+                MyDefinitionManager.Static.TryGetBotDefinition(botBuilder.BotDefId, out botDefinition);
                 Debug.Assert(botDefinition != null, "Bot definition could not be found.");
                 if (botDefinition == null)
                     return;
@@ -544,7 +678,7 @@ namespace Sandbox.Game.AI
             else
             {
                 // hack for removing uncontrolled bot players or saved dead characters
-                var player = Sync.Players.GetPlayerById(new MyPlayer.PlayerId(MySteam.UserId, playerNumber));
+                var player = Sync.Players.GetPlayerById(new MyPlayer.PlayerId(Sync.MyId, playerNumber));
                 Sync.Players.RemovePlayer(player);
             }
         }
@@ -557,26 +691,30 @@ namespace Sandbox.Game.AI
                 if (entry.Value.BotDefinition.BehaviorType == botType)
                 {
                     Sync.Players.GetPlayerById(new Sandbox.Game.World.MyPlayer.PlayerId(Sync.MyId, entry.Key));
-                    RemoveBot(entry.Key);
+                    RemoveBot(entry.Key, removeCharacter: true);
                 }
             }
-            PerformBotRemovals(true);
+            PerformBotRemovals();
         }
 
-        private void PerformBotRemovals(bool removeEntity)
+        private void PerformBotRemovals()
         {
-            int playerNumber;
-            while (m_removeQueue.TryDequeue(out playerNumber))
+            BotRemovalRequest request;
+            while (m_removeQueue.TryDequeue(out request))
             {
-                MyPlayer player = Sync.Players.GetPlayerById(new MyPlayer.PlayerId(MySteam.UserId, playerNumber));
+                MyPlayer player = Sync.Players.GetPlayerById(new MyPlayer.PlayerId(Sync.MyId, request.SerialId));
                 if (player != null)
-                    Sync.Players.RemovePlayer(player, removeEntity);
+                    Sync.Players.RemovePlayer(player, request.RemoveCharacter);
             }
         }
 
-        public void RemoveBot(int playerNumber)
+        public void RemoveBot(int playerNumber, bool removeCharacter = false)
         {
-            m_removeQueue.Enqueue(playerNumber);
+            var request = new BotRemovalRequest();
+            request.SerialId = playerNumber;
+            request.RemoveCharacter = removeCharacter;
+
+            m_removeQueue.Enqueue(request);
         }
 
         void LocalPlayerRemoved(int playerNumber)
@@ -595,11 +733,17 @@ namespace Sandbox.Game.AI
 
             if (MyControllerHelper.IsControl(MySpaceBindingCreator.CX_CHARACTER, MyControlsSpace.PRIMARY_TOOL_ACTION))
             {
-                if (MySession.ControlledEntity != null && BotToSpawn != null)
+                if (MySession.Static.ControlledEntity != null && BotToSpawn != null)
                     TrySpawnBot();
-                if (MySession.ControlledEntity != null && CommandDefinition != null)
+                if (MySession.Static.ControlledEntity != null && CommandDefinition != null)
                     UseCommand();
             }
+        }
+
+        public void TrySpawnBot(MyAgentDefinition agentDefinition)
+        {
+            BotToSpawn = agentDefinition;
+            TrySpawnBot();
         }
 
         private void CurrentToolbar_SelectedSlotChanged(MyToolbar toolbar, MyToolbar.SlotArgs args)
@@ -628,9 +772,9 @@ namespace Sandbox.Game.AI
         {
             Vector3D cameraPos, cameraDir;
 
-            if (MySession.GetCameraControllerEnum() == Common.ObjectBuilders.MyCameraControllerEnum.ThirdPersonSpectator || MySession.GetCameraControllerEnum() == Common.ObjectBuilders.MyCameraControllerEnum.Entity)
+            if (MySession.Static.GetCameraControllerEnum() == MyCameraControllerEnum.ThirdPersonSpectator || MySession.Static.GetCameraControllerEnum() == MyCameraControllerEnum.Entity)
             {
-                var headMatrix = MySession.ControlledEntity.GetHeadMatrix(true, true);
+                var headMatrix = MySession.Static.ControlledEntity.GetHeadMatrix(true, true);
                 cameraPos = headMatrix.Translation;
                 cameraDir = headMatrix.Forward;
             }
@@ -640,11 +784,20 @@ namespace Sandbox.Game.AI
                 cameraDir = MySector.MainCamera.WorldMatrix.Forward;
             }
 
+
             List<MyPhysics.HitInfo> hitInfos = new List<MyPhysics.HitInfo>();
 
-            MyPhysics.CastRay(cameraPos, cameraPos + cameraDir * 100, hitInfos, MyPhysics.ObjectDetectionCollisionLayer);
+            var line = new LineD(MySector.MainCamera.Position, MySector.MainCamera.Position + MySector.MainCamera.ForwardVector * 1000);
+
+            MyPhysics.CastRay(line.From, line.To, hitInfos, MyPhysics.CollisionLayers.DefaultCollisionLayer);
+
+            //MyPhysics.CastRay(cameraPos, cameraPos + cameraDir * 1000, hitInfos, MyPhysics.CollisionLayers.ObjectDetectionCollisionLayer);
             if (hitInfos.Count == 0)
+            //return;
+            {
+                MyAIComponent.Static.SpawnNewBot(BotToSpawn, cameraPos);
                 return;
+            }
 
             MyPhysics.HitInfo? closestValidHit = null;
             foreach (var hitInfo in hitInfos)
@@ -655,18 +808,33 @@ namespace Sandbox.Game.AI
                     closestValidHit = hitInfo;
                     break;
                 }
-                else if (ent is MyVoxelMap)
+                else if (ent is MyVoxelBase)
+                {
+                    closestValidHit = hitInfo;
+                    break;
+                }
+                else if (ent is MyVoxelPhysics)
                 {
                     closestValidHit = hitInfo;
                     break;
                 }
             }
 
+            /*
             if (closestValidHit.HasValue)
             {
                 Vector3D position = closestValidHit.Value.Position;
                 MyAIComponent.Static.SpawnNewBot(BotToSpawn, position);
             }
+             */
+            Vector3D position;
+            if (closestValidHit.HasValue)
+                position = closestValidHit.Value.Position;
+            else
+                position = MySector.MainCamera.Position;
+
+            MyAIComponent.Static.SpawnNewBot(BotToSpawn, position);
+            
         }
 
         private void UseCommand()
@@ -689,9 +857,19 @@ namespace Sandbox.Game.AI
             return highestExistingPlayer + 1;
         }
 
+        public static int GenerateBotId()
+        {
+            int current = Static.m_lastBotId;
+            Static.m_lastBotId = GenerateBotId(current);
+            return Static.m_lastBotId;
+        }
+
         public void DebugDrawBots()
         {
-            m_botCollection.DebugDrawBots();
+            if (MyDebugDrawSettings.ENABLE_DEBUG_DRAW)
+            {
+                m_botCollection.DebugDrawBots();
+            }
         }
 
         public void DebugSelectNextBot()
@@ -708,7 +886,7 @@ namespace Sandbox.Game.AI
         {
             if (m_botCollection.HasBot)
             {
-                var player = Sync.Players.GetPlayerById(new MyPlayer.PlayerId(MySteam.UserId, m_botCollection.GetHandleToFirstBot()));
+                var player = Sync.Players.GetPlayerById(new MyPlayer.PlayerId(Sync.MyId, m_botCollection.GetHandleToFirstBot()));
                 Sync.Players.RemovePlayer(player);
             }
         }
@@ -729,8 +907,10 @@ namespace Sandbox.Game.AI
                     m_botCollection.CheckCompatibilityWithBots(behaviorTree);
                 }
                 IntPtr toolWindowHandle = IntPtr.Zero;
+#if !XB1
                 if (m_behaviorTreeCollection.TryGetValidToolWindow(out toolWindowHandle))
                     WinApi.PostMessage(toolWindowHandle, MyWMCodes.BEHAVIOR_TOOL_TREE_UPLOAD_SUCCESS, IntPtr.Zero, IntPtr.Zero);
+#endif // !XB1
             }
         }
 

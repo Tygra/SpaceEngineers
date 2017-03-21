@@ -1,9 +1,12 @@
 ﻿using Havok;
+using Sandbox.Common;
 using Sandbox.Engine.Utils;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
+using VRage.Game.Components;
 using VRage.Utils;
 using VRageMath;
 using VRageRender;
@@ -398,6 +401,109 @@ namespace Sandbox.Engine.Physics
 
                 if (cont)
                     VRageRender.MyRenderProxy.DebugDrawLine3D(posA, posB, Color.White, Color.White, false);
+            }
+        }
+
+        public static void DebugDrawAddForce(MyPhysicsBody physics, MyPhysicsForceType type, Vector3? force, Vector3D? position, Vector3? torque)
+        {
+            Matrix transform;
+
+            const float scale = 0.1f;
+            switch (type)
+            {
+                case MyPhysicsForceType.ADD_BODY_FORCE_AND_BODY_TORQUE:
+                    {
+                        if (physics.RigidBody != null)
+                        {
+                            transform = physics.RigidBody.GetRigidBodyMatrix();
+                            Vector3D p = physics.CenterOfMassWorld + physics.LinearVelocity * VRage.Game.MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS;// ClusterToWorld(transform.Translation);//ClusterToWorld(transform.Translation);
+
+                            if (force.HasValue)
+                            {
+                                Vector3 f = Vector3.TransformNormal(force.Value, transform) * scale;
+                                MyRenderProxy.DebugDrawArrow3D(p, p + f, Color.Blue, Color.Red, false);
+                            }
+                            if (torque.HasValue)
+                            {
+                                Vector3 f = Vector3.TransformNormal(torque.Value, transform) * scale;
+                                MyRenderProxy.DebugDrawArrow3D(p, p + f, Color.Blue, Color.Purple, false);
+                            }
+                        }
+                    }
+                    break;
+                case MyPhysicsForceType.APPLY_WORLD_IMPULSE_AND_WORLD_ANGULAR_IMPULSE:
+                    {
+                        Vector3D p = position.Value + physics.LinearVelocity * VRage.Game.MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS;
+
+                        if (force.HasValue)
+                        {
+                            MyRenderProxy.DebugDrawArrow3D(p, p + force.Value * scale, Color.Blue, Color.Red, false);
+                        }
+                        if (torque.HasValue)
+                        {
+                            MyRenderProxy.DebugDrawArrow3D(p, p + torque.Value * scale, Color.Blue, Color.Purple, false);
+                        }
+                    }
+                    break;
+                case MyPhysicsForceType.APPLY_WORLD_FORCE:
+                    {
+                        if (position.HasValue)
+                        {
+                            Vector3D p = position.Value + physics.LinearVelocity * VRage.Game.MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS;
+
+                            if (force.HasValue)
+                            {
+                                MyRenderProxy.DebugDrawArrow3D(p, p + force.Value * VRage.Game.MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS * scale, Color.Blue, Color.Red, false);
+                            }
+                        }
+                    }
+
+                    break;
+                default:
+                    {
+                        Debug.Fail("Unhandled enum!");
+                    }
+                    break;
+            }
+        }
+
+        public static void DebugDrawCoordinateSystem(Vector3? position, Vector3? forward, Vector3? side, Vector3? up, float scale = 1)
+        {
+            if (position.HasValue)
+            {
+                Vector3D p = position.Value;
+
+                if (forward.HasValue)
+                {
+                    Vector3 f = forward.Value * scale;
+                    MyRenderProxy.DebugDrawArrow3D(p, p + f, Color.Blue, Color.Red, false);
+                }
+
+                if (side.HasValue)
+                {
+                    Vector3 s = side.Value * scale;
+                    MyRenderProxy.DebugDrawArrow3D(p, p + s, Color.Blue, Color.Green, false);
+                }
+
+                if (up.HasValue)
+                {
+                    Vector3 u = up.Value * scale;
+                    MyRenderProxy.DebugDrawArrow3D(p, p + u, Color.Blue, Color.Blue, false);
+                }
+            }
+        }
+
+        public static void DebugDrawVector3(Vector3? position, Vector3? vector, Color color, float scale = 0.01f)
+        {
+            if (position.HasValue)
+            {
+                Vector3D p = position.Value;
+
+                if (vector.HasValue)
+                {
+                    Vector3 v = vector.Value * scale;
+                    MyRenderProxy.DebugDrawArrow3D(p, p + v, color, color, false);
+                }
             }
         }
     }

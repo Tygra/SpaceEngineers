@@ -3,8 +3,13 @@ using Sandbox.Engine.Physics;
 using Sandbox.Game.Entities;
 using System.Collections.Generic;
 using System.Linq;
+using VRage.Game;
+using VRage.Game.Entity;
 using VRageMath;
 using VRageRender;
+using Sandbox.Game.WorldEnvironment.Modules;
+using Sandbox.Game.WorldEnvironment;
+using Sandbox.Game.World;
 
 namespace Sandbox.Game.Weapons.Guns
 {
@@ -34,6 +39,8 @@ namespace Sandbox.Game.Weapons.Guns
 
 		public static bool GetShapeCenter(HkShape shape, uint shapeKey, MyCubeGrid grid, ref Vector3D shapeCenter)
 		{
+            return false; //Disabled because of bad computing shapeCenter in relation with grid (alway around grid center).
+                          //Called on grid part which has havok shape (only door?).
 			bool shapeSet = true;
 
 			switch (shape.ShapeType)
@@ -91,9 +98,10 @@ namespace Sandbox.Game.Weapons.Guns
         {
             m_entitiesInRange.Clear();
             m_hits.Clear();
-            MyPhysics.CastRay(m_origin, FrontPoint, m_hits, MyPhysics.ObjectDetectionCollisionLayer);
+            MyPhysics.CastRay(m_origin, FrontPoint, m_hits, MyPhysics.CollisionLayers.ObjectDetectionCollisionLayer);
 
             DetectionInfo value = new DetectionInfo();
+            bool encounteredModel = false;
             foreach (var hit in m_hits)
             {
 				var hitInfo = hit.HkHitInfo;
@@ -111,7 +119,7 @@ namespace Sandbox.Game.Weapons.Guns
                     {
                         var shape = hitInfo.Body.GetShape();
                         int shapeIdx = 0;
-                        if(grid.Physics.IsWelded || grid.Physics.WeldInfo.Children.Count != 0)
+                        if(grid.Physics.IsWelded || grid.GetPhysicsBody().WeldInfo.Children.Count != 0)
                         {
                             if (shape.IsContainer())
                             {
@@ -121,7 +129,7 @@ namespace Sandbox.Game.Weapons.Guns
                         }
                         if (!GetShapeCenter(shape, hitInfo.GetShapeKey(shapeIdx), grid, ref detectionPoint))
                         {
-                            if (grid.GridSizeEnum == Common.ObjectBuilders.MyCubeSize.Large)
+                            if (grid.GridSizeEnum == MyCubeSize.Large)
                                 detectionPoint += hit.HkHitInfo.Normal * -0.08f;
                             else
                                 detectionPoint += hit.HkHitInfo.Normal * -0.02f;
@@ -138,6 +146,16 @@ namespace Sandbox.Game.Weapons.Guns
                     else
                     {
                         m_entitiesInRange[rootEntity.EntityId] = new DetectionInfo(rootEntity as MyEntity, detectionPoint);
+                    }
+
+                    if (entity is MyEnvironmentSector && !encounteredModel)
+                    {
+                        var sector = entity as MyEnvironmentSector;
+                        var shapekey = hitInfo.GetShapeKey(0);
+                        var itemId = sector.GetItemFromShapeKey(shapekey);
+                        if (sector.DataView.Items[itemId].ModelIndex < 0) continue;
+                        encounteredModel = true;
+                        m_entitiesInRange[entity.EntityId] = new DetectionInfo(sector, detectionPoint, itemId);
                     }
                 }
             }

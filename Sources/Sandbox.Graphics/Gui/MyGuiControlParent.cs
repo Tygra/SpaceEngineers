@@ -1,9 +1,9 @@
-﻿using Sandbox.Common.ObjectBuilders.Gui;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
+using VRage.Game;
 using VRage.Utils;
 using VRageMath;
 
@@ -56,6 +56,11 @@ namespace Sandbox.Graphics.GUI
             get { return m_controls; }
         }
 
+        public override void Clear()
+        {
+            Controls.Clear();
+        }
+
         #region Overriden methods
 
         public override void Draw(float transitionAlpha, float backgroundTransitionAlpha)
@@ -69,7 +74,8 @@ namespace Sandbox.Graphics.GUI
                     continue;
                 }
 
-                control.Draw(transitionAlpha, backgroundTransitionAlpha);
+                if (!(control is MyGuiControlGridDragAndDrop))
+                    control.Draw(transitionAlpha * control.Alpha, backgroundTransitionAlpha * control.Alpha);
             }
         }
 

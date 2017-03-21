@@ -1,13 +1,17 @@
 ﻿using SharpDX;
 using SharpDX.Windows;
+using SharpDX.Mathematics;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
+#if !UNSHARPER
 using System.Windows.Forms;
+#endif
 using VRage.Collections;
 using VRage;
 using VRage.Stats;
@@ -34,14 +38,21 @@ namespace VRage
         }
 
         readonly MyGameTimer m_timer;
+        readonly WaitForTargetFrameRate m_waiter;
         MyTimeSpan m_messageProcessingStart; // Used for profiling message queue
+        MyTimeSpan m_frameStart;
+        MyTimeSpan m_appEventsTime;
 
         volatile bool m_stopped = false;
 
         IMyRenderWindow m_renderWindow;
         MyRenderQualityEnum m_currentQuality;
 
-        System.Windows.Forms.Control m_form;
+#if !UNSHARPER
+		System.Windows.Forms.Control m_form;
+#else
+		RenderForm m_form;
+#endif
 
         private MyRenderDeviceSettings m_settings;
         private MyRenderDeviceSettings? m_newSettings;
@@ -62,9 +73,13 @@ namespace VRage
         public event SizeChangedHandler SizeChanged;
         private readonly bool m_separateThread;
 
-        private MyRenderThread(MyGameTimer timer, bool separateThread)
+        private readonly MyConcurrentQueue<EventWaitHandle> m_debugWaitForPresentHandles = new MyConcurrentQueue<EventWaitHandle>(16);
+        private int m_debugWaitForPresentHandleCount = 0;
+
+        private MyRenderThread(MyGameTimer timer, bool separateThread, float maxFrameRate)
         {
             m_timer = timer;
+            m_waiter = new WaitForTargetFrameRate(timer, maxFrameRate);
             m_separateThread = separateThread;
 
             if (separateThread)
@@ -82,22 +97,22 @@ namespace VRage
             }
         }
 
-        public static MyRenderThread Start(MyGameTimer timer, InitHandler initHandler, MyRenderDeviceSettings? settingsToTry, MyRenderQualityEnum renderQuality)
+        public static MyRenderThread Start(MyGameTimer timer, InitHandler initHandler, MyRenderDeviceSettings? settingsToTry, MyRenderQualityEnum renderQuality, float maxFrameRate)
         {
-            var result = new MyRenderThread(timer, true);
+            var result = new MyRenderThread(timer, true, maxFrameRate);
             result.SystemThread.Start(new StartParams() { InitHandler = initHandler, SettingsToTry = settingsToTry, RenderQuality = renderQuality });
             return result;
         }
 
-        public static MyRenderThread StartSync(MyGameTimer timer, IMyRenderWindow renderWindow, MyRenderDeviceSettings? settingsToTry, MyRenderQualityEnum renderQuality)
+        public static MyRenderThread StartSync(MyGameTimer timer, IMyRenderWindow renderWindow, MyRenderDeviceSettings? settingsToTry, MyRenderQualityEnum renderQuality, float maxFrameRate)
         {
-            var result = new MyRenderThread(timer, false);
+            var result = new MyRenderThread(timer, false, maxFrameRate);
             result.m_renderWindow = renderWindow;
             result.m_settings = MyRenderProxy.CreateDevice(result, renderWindow.Handle, settingsToTry);
             MyRenderProxy.SendCreatedDeviceSettings(result.m_settings);
 
             result.m_currentQuality = renderQuality;
-            result.m_form = System.Windows.Forms.Control.FromHandle(renderWindow.Handle);
+            result.m_form = Control.FromHandle(renderWindow.Handle);
 
             result.LoadContent();
             result.UpdateSize();
@@ -108,6 +123,11 @@ namespace VRage
         {
             if (MyRenderProxy.EnableAppEventsCall)
             {
+                if ((m_timer.Elapsed - m_appEventsTime).Miliseconds > 10)
+                {
+                    Application.DoEvents();
+                    m_appEventsTime = m_timer.Elapsed;
+                }
                 Application.DoEvents();
             }
             RenderCallback();
@@ -142,9 +162,11 @@ namespace VRage
             {
                 // TODO: OP! Should be done better
                 try
-                {
-                    if (!m_form.IsDisposed)
-                        m_form.Invoke(new Action(OnExit));
+				{
+#if !UNSHARPER
+					if (!m_form.IsDisposed)
+                       m_form.Invoke(new Action(OnExit));
+#endif
                 }
                 catch
                 {
@@ -176,16 +198,24 @@ namespace VRage
             var startParams = (StartParams)param;
 
             m_renderWindow = startParams.InitHandler();
-            var control = System.Windows.Forms.Control.FromHandle(m_renderWindow.Handle);
+#if !UNSHARPER
+			var control = System.Windows.Forms.Control.FromHandle(m_renderWindow.Handle);
+#endif
 
             m_settings = MyRenderProxy.CreateDevice(this, m_renderWindow.Handle, startParams.SettingsToTry);
+            if (m_settings.AdapterOrdinal == -1)
+                return;
             MyRenderProxy.SendCreatedDeviceSettings(m_settings);
             m_currentQuality = startParams.RenderQuality;
-            m_form = control;
+#if !UNSHARPER
+			m_form = control;
+#else
+			m_form = m_renderWindow as RenderForm;
+#endif
 
             LoadContent();
             UpdateSize();
-
+            
             //RenderLoop.UseCustomDoEvents = true;
             RenderLoop.Run(m_form, RenderCallback);
 
@@ -198,8 +228,14 @@ namespace VRage
         {
             if (m_messageProcessingStart != MyTimeSpan.Zero)
             {
-                ProfilerShort.CustomValue("MessageQueue", 0, m_timer.Elapsed - m_messageProcessingStart);
+                MyTimeSpan messageQueueDuration = m_timer.Elapsed - m_messageProcessingStart;
+                ProfilerShort.CustomValue("MessageQueue", 0, messageQueueDuration);
             }
+            ProfilerShort.Begin("Wait");
+            m_waiter.Wait();
+            ProfilerShort.End();
+            
+            m_frameStart = m_timer.Elapsed;
 
             ProfilerShort.Begin("PrepareDraw");
 
@@ -217,8 +253,7 @@ namespace VRage
 
             ProfilerShort.Begin("BeforeRender");
             MyRenderStats.Generic.WriteFormat("Available GPU memory: {0} MB", (float)MyRenderProxy.GetAvailableTextureMemory() / 1024 / 1024, MyStatTypeEnum.CurrentValue, 300, 2);
-            var drawTime = m_timer.Elapsed;
-            MyRenderProxy.BeforeRender(drawTime);
+            MyRenderProxy.BeforeRender(m_frameStart);
             ProfilerShort.End();
 
             ProfilerShort.Begin("RenderWindow.BeforeDraw");
@@ -226,11 +261,13 @@ namespace VRage
             ProfilerShort.End();
 
             ProfilerShort.Begin("BeforeDraw(event)");
-            var handler = BeforeDraw;
-            if (handler != null) handler();
+			if (BeforeDraw != null)
+				BeforeDraw();
             ProfilerShort.End();
 
             ProfilerShort.End();
+
+            ProfilerShort.Begin("Draw");
 
             ProfilerShort.Begin("TestCooperativeLevel");
             var deviceResult = MyRenderProxy.TestDeviceCooperativeLevel();
@@ -273,6 +310,7 @@ namespace VRage
                 }
                 ProfilerShort.End();
             }
+            ProfilerShort.End();
 
             ProfilerShort.Begin("AfterRender");
             MyRenderProxy.AfterRender();
@@ -281,6 +319,7 @@ namespace VRage
             ProfilerShort.Begin("Present");
             if (deviceResult == MyRenderDeviceCooperativeLevel.Ok && m_renderWindow.DrawEnabled)
             {
+                this.DoBeforePresent();
                 try
                 {
                     MyRenderProxy.Present();
@@ -288,10 +327,38 @@ namespace VRage
                 catch (MyDeviceLostException)
                 {
                 }
+                this.DoAfterPresent();
             }
             ProfilerShort.End();
 
+            if (m_separateThread)
+            {
+                MyRenderProxy.GetRenderProfiler().Commit();
+            }
+
             m_messageProcessingStart = m_timer.Elapsed;
+        }
+
+        private void DoBeforePresent()
+        {
+            // store number of waiting before present (newcomers lmust wait for next frame and will not be dequeued now)
+            m_debugWaitForPresentHandleCount = m_debugWaitForPresentHandles.Count;
+        }
+
+        private void DoAfterPresent()
+        {
+            for (int i = 0; i < m_debugWaitForPresentHandleCount; i++)
+            {
+                EventWaitHandle handle;
+                if (m_debugWaitForPresentHandles.TryDequeue(out handle) && handle != null)
+                    handle.Set(); // release threads waiting for present
+            }
+            m_debugWaitForPresentHandleCount = 0;
+        }
+
+        public void DebugAddWaitingForPresent(EventWaitHandle handle)
+        {
+            m_debugWaitForPresentHandles.Enqueue(handle);
         }
 
         private void ApplySettingsChanges()
@@ -339,12 +406,17 @@ namespace VRage
                     break;
 
                 case MyWindowModeEnum.FullscreenWindow:
-                    {
+					{
+#if UNSHARPER
+						Debug.Assert(false);
+#else
                         WinApi.DEVMODE mode = new WinApi.DEVMODE();
                         WinApi.EnumDisplaySettings(null, WinApi.ENUM_REGISTRY_SETTINGS, ref mode);
                         VRage.Trace.MyTrace.Watch("Registry display settings", string.Format("{0}x{1}", mode.dmPelsWidth, mode.dmPelsHeight));
-                        m_renderWindow.OnModeChanged(MyWindowModeEnum.FullscreenWindow, mode.dmPelsWidth, mode.dmPelsHeight);
-                        break;
+						m_renderWindow.OnModeChanged(MyWindowModeEnum.FullscreenWindow, mode.dmPelsWidth, mode.dmPelsHeight);
+#endif
+
+						break;
                     }
 
                 case MyWindowModeEnum.Window:
@@ -374,13 +446,14 @@ namespace VRage
 
         private void Draw()
         {
+            MySimpleProfiler.Begin("Render");
             ProfilerShort.Begin("BeginScene");
             MyRenderProxy.DrawBegin();
             ProfilerShort.End();
 
             ProfilerShort.Begin("Clear");
             // TODO: OP! This should be done only to prevent weird things on screen, not every frame
-            MyRenderProxy.ClearBackbuffer(new ColorBGRA(0.0f));
+            //MyRenderProxy.ClearBackbuffer(new ColorBGRA(0.0f));
             MyRenderProxy.ClearLargeMessages();
             ProfilerShort.End();
 
@@ -388,16 +461,17 @@ namespace VRage
             MyRenderProxy.Draw();
             ProfilerShort.End();
 
-            if (m_separateThread)
-            {
-                MyRenderProxy.GetRenderProfiler().Commit();
-            }
-
             MyRenderProxy.GetRenderProfiler().Draw();
 
             ProfilerShort.Begin("EndScene");
             MyRenderProxy.DrawEnd();
             ProfilerShort.End();
+            MySimpleProfiler.End("Render");
+        }
+
+        public void SetMouseCapture(bool capture)
+        {
+            m_renderWindow.SetMouseCapture(capture);
         }
     }
 }

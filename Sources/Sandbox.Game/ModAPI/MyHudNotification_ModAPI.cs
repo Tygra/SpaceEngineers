@@ -5,6 +5,8 @@ using System.Text;
 
 using Sandbox.Common;
 using Sandbox.ModAPI;
+using VRage.Game;
+using VRage.Game.ModAPI;
 
 namespace Sandbox.Game.Gui
 {
@@ -26,7 +28,7 @@ namespace Sandbox.Game.Gui
             }
         }
 
-        MyFontEnum IMyHudNotification.Font
+        string IMyHudNotification.Font
         {
             get { return Font; }
             set { Font = value; }

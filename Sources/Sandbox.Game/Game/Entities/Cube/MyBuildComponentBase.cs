@@ -1,6 +1,6 @@
 ﻿using Sandbox.Common;
 using Sandbox.Common.ObjectBuilders;
-using Sandbox.Common.ObjectBuilders.ComponentSystem;
+using VRage.Game.ObjectBuilders.ComponentSystem;
 using Sandbox.Definitions;
 using Sandbox.Engine.Utils;
 using Sandbox.Game.Entities;
@@ -14,8 +14,10 @@ using System.Linq;
 using System.Text;
 using VRage;
 using VRage.Collections;
-using VRage.Components;
+using VRage.Game;
+using VRage.Game.Components;
 using VRageMath;
+using VRage.Game.Entity;
 
 namespace Sandbox.Game.World
 {
@@ -29,7 +31,7 @@ namespace Sandbox.Game.World
         public abstract MyInventoryBase GetBuilderInventory(long entityId);
         public abstract MyInventoryBase GetBuilderInventory(MyEntity builder);
 
-        public abstract bool HasBuildingMaterials(MyEntity builder);
+        public abstract bool HasBuildingMaterials(MyEntity builder, bool testTotal = false);
 
         // CH: TODO: This is here just temporarily. We should move it to a better place later, maybe character definition?
         public virtual void AfterCharacterCreate(MyCharacter character)
@@ -43,12 +45,14 @@ namespace Sandbox.Game.World
 
         // Convention: All these functions will erase the RequiredMaterials first thing when they're called
         public abstract void GetGridSpawnMaterials(MyCubeBlockDefinition definition, MatrixD worldMatrix, bool isStatic);
+        public abstract void GetGridSpawnMaterials(MyObjectBuilder_CubeGrid grid);
         public abstract void GetBlockPlacementMaterials(MyCubeBlockDefinition definition, Vector3I position, MyBlockOrientation orientation, MyCubeGrid grid);
         public abstract void GetBlocksPlacementMaterials(HashSet<MyCubeGrid.MyBlockLocation> hashSet, MyCubeGrid grid);
-        public abstract void GetGridSpawnMaterials(MyObjectBuilder_CubeGrid grid);
+        public abstract void GetBlockAmountPlacementMaterials(MyCubeBlockDefinition definition, int amount);
+        public abstract void GetMultiBlockPlacementMaterials(MyMultiBlockDefinition multiBlockDefinition);
 
         // This function does some modifications to the cube block's object builder before it's built, usually integrity changes, etc...
-        public virtual void BeforeCreateBlock(MyCubeBlockDefinition definition, MyEntity builder, MyObjectBuilder_CubeBlock ob)
+        public virtual void BeforeCreateBlock(MyCubeBlockDefinition definition, MyEntity builder, MyObjectBuilder_CubeBlock ob, bool buildAsAdmin)
         {
             if (definition.EntityComponents == null) return;
 
@@ -67,17 +71,14 @@ namespace Sandbox.Game.World
         }
 
         // This function uses RequiredMaterials, so call to Get...Materials has to precede it!
-        public abstract void AfterGridCreated(MyCubeGrid grid, MyEntity builder);
-        public abstract void AfterGridsSpawn(Dictionary<MyDefinitionId, int> buildItems, MyEntity builder);
-        public abstract void AfterBlockBuild(MySlimBlock block, MyEntity builder);
-        public abstract void AfterBlocksBuild(HashSet<MyCubeGrid.MyBlockLocation> builtBlocks, MyEntity builder);
+        public abstract void AfterSuccessfulBuild(MyEntity builder, bool instantBuild);
 
-        internal MyFixedPoint GetItemAmountCombined(MyInventoryBase availableInventory, MyDefinitionId myDefinitionId)
+        protected internal MyFixedPoint GetItemAmountCombined(MyInventoryBase availableInventory, MyDefinitionId myDefinitionId)
         {
             return m_componentCombiner.GetItemAmountCombined(availableInventory, myDefinitionId);
         }
 
-        internal void RemoveItemsCombined(MyInventoryBase inventory, int itemAmount, MyDefinitionId itemDefinitionId)
+        protected internal void RemoveItemsCombined(MyInventoryBase inventory, int itemAmount, MyDefinitionId itemDefinitionId)
         {
             m_materialList.Clear();
             m_materialList.AddMaterial(itemDefinitionId, itemAmount);

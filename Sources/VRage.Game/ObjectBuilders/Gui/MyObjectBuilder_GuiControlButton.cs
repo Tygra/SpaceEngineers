@@ -1,11 +1,8 @@
 ﻿using ProtoBuf;
-using System;
 using VRage.ObjectBuilders;
-using VRageMath;
 
-namespace Sandbox.Common.ObjectBuilders.Gui
+namespace VRage.Game
 {
-
     public enum MyGuiControlButtonStyleEnum
     {
         Default,
@@ -27,6 +24,10 @@ namespace Sandbox.Common.ObjectBuilders.Gui
         SquareSmall,
         UrlText,
         Error,
+        Like,
+        Envelope,
+        Bug,
+        Help
     }
 
     [ProtoContract]

@@ -6,11 +6,13 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using VRage;
+using VRage.Game.Entity;
 using VRage.Groups;
+using VRage.Profiler;
 
 namespace Sandbox.Engine.Physics
 {
-    class MyWeldGroupData : IGroupData<MyEntity>
+    public class MyWeldGroupData : IGroupData<MyEntity>
     {
         MyGroups<MyEntity, MyWeldGroupData>.Group m_group;
         MyEntity m_weldParent;
@@ -23,19 +25,22 @@ namespace Sandbox.Engine.Physics
 
         public void OnNodeAdded(MyEntity entity)
         {
-            Debug.Assert(entity.Physics == null || !entity.Physics.IsWelded || entity.Physics.WeldInfo.Parent == m_weldParent.Physics);
+            if (entity.MarkedForClose)
+                return;
+            //Debug.Assert(entity.Physics == null || !entity.Physics.IsWelded || entity.GetPhysicsBody().WeldInfo.Parent == m_weldParent.Physics);
             ProfilerShort.Begin("WeldGroup.OnNodeAdded");
             if (m_weldParent == null)
                 m_weldParent = entity;
             else
             {
-                Debug.Assert(m_weldParent.Physics != null && entity.Physics != null);
-                if(m_weldParent.Physics.IsStatic)
-                    m_weldParent.Physics.Weld(entity.Physics);
-                else if (entity.Physics.IsStatic || m_weldParent.Physics.RigidBody2 == null && entity.Physics.RigidBody2 != null)
+                var parentPhysicsBody = m_weldParent.Physics as MyPhysicsBody;
+                Debug.Assert(parentPhysicsBody != null && entity.Physics != null);
+                if(parentPhysicsBody.IsStatic)
+                    parentPhysicsBody.Weld(entity.Physics as MyPhysicsBody);
+                else if (entity.Physics.IsStatic || parentPhysicsBody.RigidBody2 == null && entity.Physics.RigidBody2 != null)
                     ReplaceParent(entity);
                 else
-                    m_weldParent.Physics.Weld(entity.Physics);
+                    parentPhysicsBody.Weld(entity.Physics as MyPhysicsBody);
             }
             if (m_weldParent.Physics != null && m_weldParent.Physics.RigidBody != null)
             {
@@ -48,92 +53,84 @@ namespace Sandbox.Engine.Physics
 
         public void OnNodeRemoved(MyEntity entity)
         {
+            if (m_weldParent == null)
+                return;
             ProfilerShort.Begin("WeldGroup.OnNodeRemoved");
             if (m_weldParent == entity)
             {
-                if(m_group.Nodes.Count > 0)
+                if(m_group.Nodes.Count == 1 && m_group.Nodes.First().NodeData.MarkedForClose)
+                {
+                }
+                else
+                    if(m_group.Nodes.Count > 0)
                     ReplaceParent(null);
             }
             else if (m_weldParent.Physics != null)
             {
-                m_weldParent.Physics.Unweld(entity.Physics);
+                if (!entity.MarkedForClose)
+                    (m_weldParent.Physics as MyPhysicsBody).Unweld(entity.Physics as MyPhysicsBody);
             }
-            else
-            {
-                System.Diagnostics.StackTrace st = new StackTrace();
-                var entitiesClosing = false;
-                foreach (var frame in st.GetFrames())
-                    entitiesClosing |= frame.GetMethod().Name.Contains("CloseAll");
-                VRage.Trace.MyTrace.Send(VRage.Trace.TraceWindow.Analytics, "Welding: Welded parent null physics.", string.Format("Unwelding from stored body. {0}", entitiesClosing ? "MyEntities.CloseAll()" : ""));
-                entity.Physics.WeldInfo.Parent.Unweld(entity.Physics);
-            }
-            if (m_weldParent.Physics != null && m_weldParent.Physics.RigidBody != null)
+            if (m_weldParent != null && m_weldParent.Physics != null && m_weldParent.Physics.RigidBody != null)
             {
                 Debug.Assert(m_weldParent.Physics.RigidBody.Layer > 0);
                 m_weldParent.Physics.RigidBody.Activate();
+                m_weldParent.RaisePhysicsChanged();
             }
-            m_weldParent.RaisePhysicsChanged();
             entity.RaisePhysicsChanged();
-            Debug.Assert(entity.Physics == null || !entity.Physics.IsWelded);
-            Debug.Assert(entity.Physics == null || entity.Physics.RigidBody == null || entity.Physics.RigidBody.Layer > 0);
+            Debug.Assert(entity.MarkedForClose || entity.Physics == null || !(entity.Physics as MyPhysicsBody).IsWelded);
+            Debug.Assert(entity.MarkedForClose || entity.Physics == null || entity.Physics.RigidBody == null || entity.Physics.RigidBody.Layer > 0);
             ProfilerShort.End();
         }
 
         private void ReplaceParent(MyEntity newParent)
         {
-            ProfilerShort.Begin("WeldGroup.ReplaceParent");
-            //foreach (var node in m_group.Nodes)
-            //    Debug.Assert(m_weldParent == node.NodeData 
-            //        || (m_weldParent.Physics == null || m_weldParent.Physics.WeldInfo.Children.Contains(node.NodeData.Physics)));
-
-            if(m_weldParent.Physics != null)
-                m_weldParent.Physics.UnweldAll(false);
-            else //parent physics was closed
-            {
-                foreach(var node in m_group.Nodes)
-                    node.NodeData.Physics.Unweld(false);
-            }
-            foreach (var node in m_group.Nodes)
-                Debug.Assert(!node.NodeData.Physics.IsWelded);
-
-            m_weldParent = newParent;
-            if (newParent == null)
-            {
-                foreach (var node in m_group.Nodes)
-                {
-                    if(node.NodeData.Physics.IsStatic)
-                    {
-                        m_weldParent = node.NodeData;
-                        break;
-                    }
-                    if (node.NodeData.Physics.RigidBody2 != null)
-                    {
-                        m_weldParent = node.NodeData;
-                    }
-                }
-            }
-
-            foreach (var node in m_group.Nodes)
-            {
-                if (m_weldParent == node.NodeData)
-                    continue;
-
-                if (m_weldParent == null)
-                    m_weldParent = node.NodeData;
-                else
-                    m_weldParent.Physics.Weld(node.NodeData.Physics, false);
-            }
-            if (!m_weldParent.Physics.IsInWorld)
-            {
-                m_weldParent.Physics.Activate();
-            }
-            ProfilerShort.End();
+            m_weldParent = MyWeldingGroups.ReplaceParent(m_group, m_weldParent, newParent);
         }
 
         public void OnCreate<TGroupData>(MyGroups<MyEntity, TGroupData>.Group group) where TGroupData : IGroupData<MyEntity>, new()
         {
             m_group = group as MyGroups<MyEntity, MyWeldGroupData>.Group;
             Debug.Assert(m_group != null, "Wrong group class");
+        }
+
+        /// <summary>
+        /// Call when node body changes quality type (dynamic/static/doubled)
+        /// Checks if there isnt more suitable parent in the group
+        /// i.e. group parent is dynamic and there is node that is static
+        /// </summary>
+        /// <param name="oldParent">WeldInfo.Parent or self if WeldInfo.Parent is null</param>
+        /// <returns>parent changed</returns>
+        public bool UpdateParent(MyEntity oldParent)
+        {
+           // Debug.Assert(m_parents.Contains(oldParent));
+            var parentBody = oldParent.GetPhysicsBody();
+            if(parentBody.WeldedRigidBody.IsFixed)
+                return false;
+
+            MyPhysicsBody newParent = parentBody;
+            foreach (var child in parentBody.WeldInfo.Children)
+            {
+                if (child.WeldedRigidBody.IsFixed)
+                {
+                    newParent = child;
+                    break;
+                }
+
+                if (!newParent.Flags.HasFlag(VRage.Game.Components.RigidBodyFlag.RBF_DOUBLED_KINEMATIC) &&
+                    child.Flags.HasFlag(VRage.Game.Components.RigidBodyFlag.RBF_DOUBLED_KINEMATIC))
+                {
+                    newParent = child;
+                }
+            }
+
+            if (newParent == parentBody)
+                return false;
+
+            ReplaceParent((MyEntity)newParent.Entity);
+            
+            //old parent was excluded, weld it back
+            newParent.Weld(parentBody);
+            return true;
         }
     }
 }

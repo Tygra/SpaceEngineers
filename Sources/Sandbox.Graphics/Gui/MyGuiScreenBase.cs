@@ -1,16 +1,16 @@
 ﻿#region Using
 
-using Sandbox.Common;
-using Sandbox.Common.ObjectBuilders.Gui;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
 using VRage;
+using VRage.Game;
 using VRage.Input;
 using VRage.Library.Utils;
 using VRage.ObjectBuilders;
+using VRage.Profiler;
 using VRage.Utils;
 using VRageMath;
 
@@ -130,13 +130,13 @@ namespace Sandbox.Graphics.GUI
         private Vector2 m_draggingControlOffset;
         private StringBuilder m_drawPositionSb = new StringBuilder();
 
-        private MyGuiControlGridDragAndDrop m_listboxDragAndDropHandlingNow;
-        private MyGuiControlBase m_comboboxHandlingNow;
-        private MyGuiControlBase m_lastHandlingControl;
+        protected MyGuiControlGridDragAndDrop m_gridDragAndDropHandlingNow;
+        protected MyGuiControlBase m_comboboxHandlingNow;
+        protected MyGuiControlBase m_lastHandlingControl;
 
         private MyGuiControlButton m_closeButton;
 
-        protected readonly MyGuiControls Elements;
+        public readonly MyGuiControls Elements;
 
         public Color BackgroundFadeColor
         {
@@ -253,8 +253,6 @@ namespace Sandbox.Graphics.GUI
         #endregion
 
         #region Mouse & Input
-
-        bool IMyGuiControlsOwner.HandleMouse { get { return true; } }
 
         public bool IsMouseOverAnyControl()
         {
@@ -407,11 +405,11 @@ namespace Sandbox.Graphics.GUI
                 }
             }
 
-            if (inputHandledBySomeControl == null && m_listboxDragAndDropHandlingNow != null)
+            if (inputHandledBySomeControl == null && m_gridDragAndDropHandlingNow != null)
             {
-                if (m_listboxDragAndDropHandlingNow.HandleInput() != null)
+                if (m_gridDragAndDropHandlingNow.HandleInput() != null)
                 {
-                    inputHandledBySomeControl = m_listboxDragAndDropHandlingNow;
+                    inputHandledBySomeControl = m_gridDragAndDropHandlingNow;
                 }
             }
 
@@ -431,7 +429,7 @@ namespace Sandbox.Graphics.GUI
                 for (int i = 0; i < visibleControls.Count; i++)
                 {
                     MyGuiControlBase control = visibleControls[i];
-                    if (control != m_comboboxHandlingNow && control != m_listboxDragAndDropHandlingNow && control.CheckMouseOver())
+                    if (control != m_comboboxHandlingNow && control != m_gridDragAndDropHandlingNow && control.CheckMouseOver())
                     {
                         mouseOverControl = control;
                         inputHandledBySomeControl = control.HandleInput();
@@ -447,7 +445,7 @@ namespace Sandbox.Graphics.GUI
                 for (int i = visibleControls.Count-1; i >= 0; --i)
                 {
                     MyGuiControlBase control = visibleControls[i];
-                    if (control != m_comboboxHandlingNow && control != m_listboxDragAndDropHandlingNow && control != mouseOverControl)
+                    if (control != m_comboboxHandlingNow && control != m_gridDragAndDropHandlingNow && control != mouseOverControl)
                     {
                         inputHandledBySomeControl = control.HandleInput();
                         if (inputHandledBySomeControl != null)
@@ -557,12 +555,22 @@ namespace Sandbox.Graphics.GUI
 
         public virtual void HandleInput(bool receivedFocusInThisUpdate)
         {
+            //  Dont allow any input when the screen is not in OPENED state
+            if (!IsLoaded || State != MyGuiScreenState.OPENED) return;
+
             //  Here we can make some one-time initialization hidden in update
             bool isThisFirstHandleInput = !m_firstUpdateServed;
 
             if (m_firstUpdateServed == false && FocusedControl == null) //m_keyboardControlIndex could be set from constructor
             {
                 FocusedControl = GetFirstFocusableControl();
+#if XB1
+                if (FocusedControl != null)
+                {
+                    Vector2 coords = MyGuiManager.GetScreenCoordinateFromNormalizedCoordinate(FocusedControl.GetPositionAbsoluteCenter());
+                    MyInput.Static.SetMousePosition((int)coords.X, (int)coords.Y);
+                }
+#endif
 
                 //  Never again call this update-initialization (except if RecreateControls() is called, which resets this)
                 m_firstUpdateServed = true;
@@ -649,6 +657,11 @@ namespace Sandbox.Graphics.GUI
             {
                 OnEnterCallback();
             }
+        }
+
+        public virtual bool HandleInputAfterSimulation()
+        {
+            return false;
         }
 
         #endregion
@@ -777,7 +790,7 @@ namespace Sandbox.Graphics.GUI
                 element.Update();
 
             m_comboboxHandlingNow = GetExclusiveInputHandler();
-            m_listboxDragAndDropHandlingNow = GetDragAndDropHandlingNow();
+            m_gridDragAndDropHandlingNow = GetDragAndDropHandlingNow();
         }
 
 
@@ -880,16 +893,8 @@ namespace Sandbox.Graphics.GUI
                 //    MyGuiManager2.DrawBorders(GetPositionAbsoluteTopLeft(), m_size.Value, Color.White, 1);
                 //}
             }
-            if (m_guiTransition != 0)
-            {
-                DrawElements(m_guiTransition, m_backgroundTransition);
-                DrawControls(m_guiTransition, m_backgroundTransition);
-            }
-            else
-            {
-                DrawElements(m_transitionAlpha, m_transitionAlpha);
-                DrawControls(m_transitionAlpha, m_transitionAlpha);
-            }
+            DrawElements(m_guiTransition != 0 ? m_guiTransition : m_transitionAlpha, m_transitionAlpha);
+            DrawControls(m_guiTransition != 0 ? m_guiTransition : m_transitionAlpha, m_transitionAlpha);
             return true;
         }
 
@@ -898,7 +903,7 @@ namespace Sandbox.Graphics.GUI
             foreach (var element in Elements)
             {
                 if (element.Visible)
-                    element.Draw(transitionAlpha, backgroundTransitionAlpha);
+                    element.Draw(transitionAlpha * element.Alpha, backgroundTransitionAlpha * element.Alpha);
             }
         }
 
@@ -910,10 +915,10 @@ namespace Sandbox.Graphics.GUI
             for (int i = 0; i < visibleControls.Count; i++)
             {
                 MyGuiControlBase control = visibleControls[i];
-                if (control != m_comboboxHandlingNow && control != m_listboxDragAndDropHandlingNow)
+                if (control != m_comboboxHandlingNow && control != m_gridDragAndDropHandlingNow && !(control is MyGuiControlGridDragAndDrop))
                 {
                     //if (MySandboxGame.IsPaused && !control.DrawWhilePaused) continue;
-                    control.Draw(transitionAlpha, backgroundTransitionAlpha);
+                    control.Draw(transitionAlpha * control.Alpha, backgroundTransitionAlpha * control.Alpha);
                 }
             }
 
@@ -921,22 +926,12 @@ namespace Sandbox.Graphics.GUI
 
             if (m_comboboxHandlingNow != null)
             {
-                m_comboboxHandlingNow.Draw(transitionAlpha, backgroundTransitionAlpha);
+                m_comboboxHandlingNow.Draw(transitionAlpha * m_comboboxHandlingNow.Alpha, backgroundTransitionAlpha * m_comboboxHandlingNow.Alpha);
             }
 
-            if (m_listboxDragAndDropHandlingNow != null)
+            if (m_gridDragAndDropHandlingNow != null)
             {
-                m_listboxDragAndDropHandlingNow.Draw(transitionAlpha, backgroundTransitionAlpha);
-            }
-
-            // draw tooltips only when screen has focus
-            if (this == MyScreenManager.GetScreenWithFocus())
-            {
-                //  Draw tooltips
-                foreach (var control in Controls.GetVisibleControls())
-                {
-                    control.ShowToolTip();
-                }
+                m_gridDragAndDropHandlingNow.Draw(transitionAlpha * m_gridDragAndDropHandlingNow.Alpha, backgroundTransitionAlpha * m_gridDragAndDropHandlingNow.Alpha);
             }
         }
 
@@ -1140,7 +1135,7 @@ namespace Sandbox.Graphics.GUI
         }
 
 
-        public MyGuiControls Controls
+        public virtual MyGuiControls Controls
         {
             get { return m_controls; }
         }
@@ -1195,13 +1190,32 @@ namespace Sandbox.Graphics.GUI
             get { return m_focusedControl; }
             set
             {
-                m_focusedControl = value;
+                if( m_focusedControl != value )
+                {
+                    var tempControl = m_focusedControl;
+                    m_focusedControl = value;
+
+                    if (tempControl != null)
+                        tempControl.OnFocusChanged(false);
+                    if (m_focusedControl != null)
+                        m_focusedControl.OnFocusChanged(true);
+                }
             }
         }
 
         public string DebugNamePath
         {
             get { return GetFriendlyName(); }
+        }
+
+        public string Name
+        {
+            get { return GetFriendlyName(); }
+        }
+
+        public IMyGuiControlsOwner Owner
+        {
+            get { return null; }
         }
 
         #endregion

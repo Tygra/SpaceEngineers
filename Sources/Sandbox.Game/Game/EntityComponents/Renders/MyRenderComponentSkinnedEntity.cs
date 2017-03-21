@@ -6,7 +6,6 @@ using Sandbox.Game.Entities.Character;
 using Sandbox.Game.Lights;
 using Sandbox.Game.World;
 using Sandbox.Graphics;
-using Sandbox.Graphics.TransparentGeometry;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -14,6 +13,7 @@ using VRage.ModAPI;
 using VRage.Utils;
 using VRageMath;
 using VRageRender;
+using VRageRender.Messages;
 
 namespace Sandbox.Game.Components
 {
@@ -65,32 +65,20 @@ namespace Sandbox.Game.Components
             if (!m_sentSkeletonMessage)
             {
                 m_sentSkeletonMessage = true;
-                var skeletonDescription = new MySkeletonBoneDescription[m_skinnedEntity.Bones.Count];
+                var characterBones = m_skinnedEntity.AnimationController.CharacterBones;
+                var skeletonDescription = new MySkeletonBoneDescription[characterBones.Length];
 
-                for (int i = 0; i < m_skinnedEntity.Bones.Count; i++)
+                for (int i = 0; i < characterBones.Length; i++)
                 {
-                    skeletonDescription[i].Parent = -1;
-                    if (m_skinnedEntity.Bones[i].Parent != null)
-                    {
-                        for (int j = 0; j < m_skinnedEntity.Bones.Count; j++)
-                        {
-                            if (m_skinnedEntity.Bones[j].Name == m_skinnedEntity.Bones[i].Parent.Name)
-                            {
-                                skeletonDescription[i].Parent = j;
-                                break;
-                            }
-                        }
-                    }
+                    if (characterBones[i].Parent == null)
+                        skeletonDescription[i].Parent = -1;
+                    else
+                        skeletonDescription[i].Parent = characterBones[i].Parent.Index;
 
-                    if (m_skinnedEntity.Bones[i].Parent != null)
-                    {
-                        Debug.Assert(skeletonDescription[i].Parent > -1, "Can't find bone with parent name!");
-                    }
-
-                    skeletonDescription[i].SkinTransform = m_skinnedEntity.Bones[i].SkinTransform;
+                    skeletonDescription[i].SkinTransform = characterBones[i].SkinTransform;
                 }
 
-                VRageRender.MyRenderProxy.SetCharacterSkeleton(RenderObjectIDs[0], skeletonDescription, Model.Animations.Skeleton.ToArray());
+                MyRenderProxy.SetCharacterSkeleton(RenderObjectIDs[0], skeletonDescription, Model.Animations.Skeleton.ToArray());
             }
         }
 
@@ -100,7 +88,7 @@ namespace Sandbox.Game.Components
 
             UpdateCharacterSkeleton();
 
-            VRageRender.MyRenderProxy.SetCharacterTransforms(RenderObjectIDs[0], m_skinnedEntity.BoneRelativeTransforms);
+            MyRenderProxy.SetCharacterTransforms(RenderObjectIDs[0], m_skinnedEntity.BoneAbsoluteTransforms, m_skinnedEntity.DecalBoneUpdates);
         }
 
         #endregion   

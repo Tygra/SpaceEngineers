@@ -2,8 +2,9 @@
 using ProtoBuf;
 using VRageMath;
 using VRage.Data;
+using VRageRender;
 
-namespace Sandbox.Common.ObjectBuilders.Definitions
+namespace VRage.Game
 {
     [ProtoContract]
     [MyObjectBuilderDefinition]
@@ -11,6 +12,9 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
     {
         [ProtoMember, ModdableContentFile("dds")]
         public string Texture;
+
+        [ProtoMember]
+        public MyTransparentMaterialTextureType TextureType = MyTransparentMaterialTextureType.FileTexture;
 
         [ProtoMember]
         public bool CanBeAffectedByOtherLights;
@@ -50,5 +54,11 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
 
         [ProtoMember]
         public float Reflectivity;
+
+        [ProtoMember]
+        public bool AlphaCutout;
+
+        [ProtoMember]
+        public Vector2I TargetSize = new Vector2I(-1, -1);
     }
 }

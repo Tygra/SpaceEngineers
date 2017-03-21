@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
+using VRage.Library.Utils;
 using VRageMath;
 
 namespace VRage.Utils
@@ -12,17 +13,30 @@ namespace VRage.Utils
         [ThreadStatic]
         static Random m_secretRandom;
 
+        [ThreadStatic]
+        static MyRandom m_secretRandomVRage = new MyRandom();
+
         static Random m_random
         {
             get
             {
                 if (m_secretRandom == null)
                 {
-                    m_secretRandom = new Random();
+                    if (VRage.Library.Utils.MyRandom.DisableRandomSeed)
+                    {
+                        m_secretRandom = new Random(1);
+                    }
+                    else
+                    {
+                        m_secretRandom = new Random();
+                    }
                 }
                 return m_secretRandom;
             }
         }
+
+
+        
 
         public static int GetRandomInt(int maxValue)
         {
@@ -65,6 +79,15 @@ namespace VRage.Utils
             Debug.Assert(Vector3D.IsUnit(ref tangent));
             Debug.Assert(Vector3D.IsUnit(ref bitangent));
             double radial = Math.Sqrt(GetRandomDouble(0, 1) * radius * radius);
+            double angle = GetRandomDouble(0, 2 * MathHelper.Pi);
+            return center + radial * (Math.Cos(angle) * tangent + Math.Sin(angle) * bitangent);
+        }
+
+        public static Vector3D GetRandomDiscPosition(ref Vector3D center, double minRadius, double maxRadius, ref Vector3D tangent, ref Vector3D bitangent)
+        {
+            Debug.Assert(Vector3D.IsUnit(ref tangent));
+            Debug.Assert(Vector3D.IsUnit(ref bitangent));
+            double radial = Math.Sqrt(GetRandomDouble(minRadius * minRadius, maxRadius * maxRadius));
             double angle = GetRandomDouble(0, 2 * MathHelper.Pi);
             return center + radial * (Math.Cos(angle) * tangent + Math.Sin(angle) * bitangent);
         }
@@ -166,6 +189,20 @@ namespace VRage.Utils
             }
         }
 
+
+        //  Returns random vector, whose direction is 'normal', but deviated by random angle (whose interval is 0..maxAngle in radians).
+        public static Vector3 GetRandomVector3MaxAngle(float maxAngle)
+        {
+            float resultTheta = MyUtils.GetRandomFloat(-maxAngle, maxAngle);
+            float resultPhi = MyUtils.GetRandomFloat(0, MathHelper.TwoPi);
+			//  Convert to cartezian coordinates (XYZ)
+            return -new Vector3(
+                MyMath.FastSin(resultTheta) * MyMath.FastCos(resultPhi),
+                MyMath.FastSin(resultTheta) * MyMath.FastSin(resultPhi),
+                MyMath.FastCos(resultTheta)
+                );
+        }
+
         //  Random vector distributed over the circle about normal. 
         //  Returns random vector that always lies on circle
         public static Vector3 GetRandomVector3CircleNormalized()
@@ -191,10 +228,21 @@ namespace VRage.Utils
             return (float)m_random.NextDouble();
         }
 
+        public static float GetRandomFloat(int hash)
+        {
+            return m_secretRandomVRage.NextFloat(hash);
+        }
+
         //  Return random float in range <minValue...maxValue>
         public static float GetRandomFloat(float minValue, float maxValue)
         {
-            return (float)m_random.NextDouble() * (maxValue - minValue) + minValue;
+            return VRage.Library.Utils.MyRandom.Instance.NextFloat() * (maxValue - minValue) + minValue;
+        }
+
+        //  Return random float in range <minValue...maxValue>
+        public static float GetRandomFloat(int hash, float minValue, float maxValue)
+        {
+            return VRage.Library.Utils.MyRandom.Instance.NextFloat(hash) * (maxValue - minValue) + minValue;
         }
 
         //  Return random double in range <minValue...maxValue>

@@ -1,8 +1,8 @@
-﻿using Sandbox.Common;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
+using VRage.Game;
 using VRage.Input;
 using VRage.Utils;
 using VRageMath;
@@ -12,13 +12,20 @@ namespace Sandbox.Graphics.GUI
 
     public enum MyGuiControlTableStyleEnum
     {
-        Default
+        Default,
+        Medieval
     }
 
-    public class MyGuiControlTable : MyGuiControlBase
+    public class MyGuiControlTable : MyGuiControlBase//MyGuiControlParent//MyGuiControlBase
     {
         #region Styles
         private static StyleDefinition[] m_styles;
+
+        private MyGuiControls m_controls;
+        public MyGuiControls Controls
+        {
+            get { return m_controls; }
+        }
 
         static MyGuiControlTable()
         {
@@ -47,6 +54,30 @@ namespace Sandbox.Graphics.GUI
                     Bottom = 5f / MyGuiConstants.GUI_OPTIMAL_SIZE.Y,
                 },
             };
+            m_styles[(int)MyGuiControlTableStyleEnum.Medieval] = new StyleDefinition()
+            {
+                Texture = MyGuiConstants.TEXTURE_SCROLLABLE_LIST,//  MyGuiConstants.TEXTURE_TABLE_BACKGROUND,
+                RowTextureHighlight = @"Textures\GUI\Controls\item_highlight_dark.dds",
+                HeaderTextureHighlight = @"Textures\GUI\Controls\item_highlight_light.dds",
+                RowFontNormal = MyFontEnum.White,
+                RowFontHighlight = MyFontEnum.White,
+                HeaderFontNormal = MyFontEnum.White,
+                HeaderFontHighlight = MyFontEnum.White,
+                TextScale = MyGuiConstants.DEFAULT_TEXT_SCALE,
+                RowHeight = 40f / MyGuiConstants.GUI_OPTIMAL_SIZE.Y,
+                Padding = new MyGuiBorderThickness()
+                {
+                    Left = 5f / MyGuiConstants.GUI_OPTIMAL_SIZE.X,
+                    Top = 5f / MyGuiConstants.GUI_OPTIMAL_SIZE.Y,
+                },
+                ScrollbarMargin = new MyGuiBorderThickness()
+                {
+                    Left = 3f / MyGuiConstants.GUI_OPTIMAL_SIZE.X,
+                    Right = 1f / MyGuiConstants.GUI_OPTIMAL_SIZE.X,
+                    Top = 3f / MyGuiConstants.GUI_OPTIMAL_SIZE.Y,
+                    Bottom = 5f / MyGuiConstants.GUI_OPTIMAL_SIZE.Y,
+                },
+            };
         }
 
         public static StyleDefinition GetVisualStyle(MyGuiControlTableStyleEnum style)
@@ -56,12 +87,12 @@ namespace Sandbox.Graphics.GUI
 
         public class StyleDefinition
         {
-            public MyFontEnum HeaderFontHighlight;
-            public MyFontEnum HeaderFontNormal;
+            public string HeaderFontHighlight;
+            public string HeaderFontNormal;
             public string HeaderTextureHighlight;
             public MyGuiBorderThickness Padding;
-            public MyFontEnum RowFontHighlight;
-            public MyFontEnum RowFontNormal;
+            public string RowFontHighlight;
+            public string RowFontNormal;
             public float RowHeight;
             public string RowTextureHighlight;
             public float TextScale;
@@ -90,7 +121,7 @@ namespace Sandbox.Graphics.GUI
         /// <summary>
         /// Index computed from scrollbar.
         /// </summary>
-        private int m_visibleRowIndexOffset;
+        protected int m_visibleRowIndexOffset;
 
         private int m_lastSortedColumnIdx;
 
@@ -220,6 +251,8 @@ namespace Sandbox.Graphics.GUI
             m_columnsMetaData = new List<ColumnMetaData>();
             VisualStyle = MyGuiControlTableStyleEnum.Default;
 
+            m_controls = new MyGuiControls(null);
+
             base.Name = "Table";
         }
         #endregion
@@ -238,6 +271,17 @@ namespace Sandbox.Graphics.GUI
 
         public void Clear()
         {
+            foreach (var row in m_rows)
+            {
+                foreach (var cell in row.Cells)
+                {
+                    if (cell.Control != null)
+                    {
+                        cell.Control.OnRemoving();
+                        cell.Control.Clear();
+                    }
+                }
+            }
             m_rows.Clear();
             SelectedRowIndex = null;
             RefreshScrollbar();
@@ -431,7 +475,10 @@ namespace Sandbox.Graphics.GUI
         public void ScrollToSelection()
         {
             if (SelectedRow == null)
+            {
+                m_visibleRowIndexOffset = 0;
                 return;
+            }
 
             int selectedIdx = SelectedRowIndex.Value;
 
@@ -477,6 +524,14 @@ namespace Sandbox.Graphics.GUI
             HandleMouseOver();
 
             HandleNewMousePress(ref captureControl);
+
+            MyGuiControlBase captured = null;
+            foreach (var control in Controls.GetVisibleControls())
+            {
+                captured = control.HandleInput();
+                if (captured != null)
+                    break;
+            }
 
             if (m_doubleClickStarted.HasValue &&
                 (MyGuiManager.TotalTimeInMilliseconds - m_doubleClickStarted.Value) >= MyGuiConstants.DOUBLE_CLICK_DELAY)
@@ -542,6 +597,11 @@ namespace Sandbox.Graphics.GUI
                     if (cell.ToolTip != null)
                         m_toolTip = cell.ToolTip;
                 }
+            }
+
+            foreach (var control in Controls.GetVisibleControls())
+            {
+                control.ShowToolTip();
             }
 
             base.ShowToolTip();
@@ -651,14 +711,26 @@ namespace Sandbox.Graphics.GUI
                         var cell = row.Cells[j];
                         var meta = m_columnsMetaData[j];
                         var cellSize = new Vector2(meta.Width * m_rowsArea.Size.X, RowHeight);
+                        if ( cell != null && cell.Control != null)
+                        {
+                            // drawing of cell that contains a control
+                            var iconPosition = MyUtils.GetCoordAlignedFromTopLeft(cellPos, cellSize, cell.IconOriginAlign);
+                            // drawing of control in the centre of the cell
+                            cell.Control.Position = cellPos + cellSize*0.5f;    
+                            cell.Control.OriginAlign = MyGuiDrawAlignEnum.HORISONTAL_CENTER_AND_VERTICAL_CENTER;
+                            cell.Control.Draw(transitionAlpha, transitionAlpha);
+                        }
+                        else
                         if (cell != null && cell.Text != null)
                         {
+                            float iconTextOffset = 0;
                             if (cell.Icon.HasValue)
                             {
                                 var iconPosition = MyUtils.GetCoordAlignedFromTopLeft(cellPos, cellSize, cell.IconOriginAlign);
                                 var icon = cell.Icon.Value;
                                 var ratios = Vector2.Min(icon.SizeGui, cellSize) / icon.SizeGui;
                                 float scale = Math.Min(ratios.X, ratios.Y);
+                                iconTextOffset = icon.SizeGui.X;
                                 MyGuiManager.DrawSpriteBatch(
                                     texture: (HasHighlight) ? icon.Highlight : icon.Normal,
                                     normalizedCoord: iconPosition,
@@ -668,6 +740,7 @@ namespace Sandbox.Graphics.GUI
                             }
 
                             var textPos = MyUtils.GetCoordAlignedFromCenter(cellPos + 0.5f * cellSize, cellSize, meta.TextAlign);
+                            textPos.X += iconTextOffset;
                             MyGuiManager.DrawString(rowFont, cell.Text, textPos,
                                 TextScaleWithLanguage,
                                 (cell.TextColor != null) ? cell.TextColor : ApplyColorMaskModifiers(ColorMask, Enabled, transitionAlpha),
@@ -857,6 +930,7 @@ namespace Sandbox.Graphics.GUI
             var position = new Vector2(posTopRight.X - (margin.Right + m_scrollBar.Size.X),
                                        posTopRight.Y + margin.Top);
             m_scrollBar.Layout(position, Size.Y - (margin.Top + margin.Bottom));
+            m_scrollBar.ChangeValue(0);
         }
 
         private void RefreshVisualStyle()
@@ -886,6 +960,7 @@ namespace Sandbox.Graphics.GUI
             public readonly MyGuiHighlightTexture? Icon;
             public readonly MyGuiDrawAlignEnum IconOriginAlign;
             public  Color? TextColor;
+            public MyGuiControlBase Control;
 
             public Row Row;
             private StringBuilder text;
@@ -916,6 +991,8 @@ namespace Sandbox.Graphics.GUI
                 IconOriginAlign = iconOriginAlign;
                 TextColor = textColor;
             }
+
+            public virtual void Update() {}
         }
 
         public class Row
@@ -939,6 +1016,12 @@ namespace Sandbox.Graphics.GUI
             public Cell GetCell(int cell)
             {
                 return Cells[cell];
+            }
+
+            public void Update() 
+            {
+                foreach (var cell in Cells)
+                    cell.Update();
             }
         }
 

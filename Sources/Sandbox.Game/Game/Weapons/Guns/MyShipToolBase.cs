@@ -11,7 +11,7 @@ using Sandbox.Game.GameSystems.Conveyors;
 using Sandbox.Game.Gui;
 using Sandbox.Game.Localization;
 using Sandbox.Game.Multiplayer;
-using Sandbox.ModAPI.Ingame;
+using Sandbox.ModAPI;
 using Sandbox.ModAPI.Interfaces;
 using System;
 using System.Collections.Generic;
@@ -21,26 +21,27 @@ using VRage.Utils;
 using VRageMath;
 using VRageRender;
 using VRage.ModAPI;
-using VRage.Components;
+using VRage.Game.Components;
+using VRage;
+using VRage.Game;
+using VRage.Game.Entity;
+using VRage.Game.ModAPI.Ingame;
+using VRage.Game.ModAPI.Interfaces;
+using Sandbox.Game.Audio;
+using Sandbox.Game.World;
+using VRage.Profiler;
+using VRage.Sync;
+using IMyEntity = VRage.ModAPI.IMyEntity;
 
 namespace Sandbox.Game.Weapons
 {
     public abstract class MyShipToolBase : MyFunctionalBlock, IMyGunObject<MyToolBase>, IMyInventoryOwner, IMyConveyorEndpointBlock, IMyShipToolBase
     {
-        private MyInventory m_inventory;
-        protected MyInventory Inventory
-        {
-            get
-            {
-                return m_inventory;
-            }
-        }
+        /// <summary>
+        /// Default reach distance of a tool;
+        /// </summary>
+        protected float DEFAULT_REACH_DISTANCE = 4.5f;
 
-        ModAPI.Interfaces.IMyInventory ModAPI.Interfaces.IMyInventoryOwner.GetInventory(int index)
-        {
-            return Inventory;
-        }
-		
         private MyMultilineConveyorEndpoint m_endpoint;
         private MyDefinitionId m_defId;
 
@@ -53,39 +54,62 @@ namespace Sandbox.Game.Weapons
         protected int m_lastTimeActivate;
 
         private int m_shootHeatup;
+        public bool IsHeatingUp { get { return (m_shootHeatup > 0); } }
 
         private bool m_effectsSet;
 
         //Debugging variable
         private int m_activateCounter;
 
-        private Dictionary<MyEntity, int> m_entitiesInContact;
+        private HashSet<MyEntity> m_entitiesInContact;
         protected BoundingSphere m_detectorSphere;
 
         private HashSet<MySlimBlock> m_blocksToActivateOn;
         private HashSet<MySlimBlock> m_tempBlocksBuffer;
 
-        private bool m_useConveyorSystem;
+        private Sync<bool> m_useConveyorSystem;
+
+        protected MyCharacter controller = null;
+        public int HeatUpFrames { get; protected set; }
+
+        public MyShipToolBase()
+        {
+#if XB1 // XB1_SYNC_NOREFLECTION
+            m_useConveyorSystem = SyncType.CreateAndAddProp<bool>();
+#endif // XB1
+            CreateTerminalControls();
+        }
 
         protected override bool CheckIsWorking()
         {
-			return ResourceSink.IsPowered && base.CheckIsWorking();
+            return ResourceSink.IsPoweredByType(MyResourceDistributorComponent.ElectricityId) && base.CheckIsWorking();
         }
 
-        static MyShipToolBase()
+        protected override void CreateTerminalControls()
         {
+            if (MyTerminalControlFactory.AreControlsCreated<MyShipToolBase>())
+                return;
+            base.CreateTerminalControls();
             var useConvSystem = new MyTerminalControlOnOffSwitch<MyShipToolBase>("UseConveyor", MySpaceTexts.Terminal_UseConveyorSystem);
-            useConvSystem.Getter = (x) => (x as IMyInventoryOwner).UseConveyorSystem;
-            useConvSystem.Setter = (x, v) => MySyncConveyors.SendChangeUseConveyorSystemRequest(x.EntityId, v);
+            useConvSystem.Getter = (x) => (x).UseConveyorSystem;
+            useConvSystem.Setter = (x, v) => (x).UseConveyorSystem =  v;
             useConvSystem.EnableToggleAction();
             MyTerminalControlFactory.AddControl(useConvSystem);
         }
 
         public override void Init(MyObjectBuilder_CubeBlock objectBuilder, MyCubeGrid cubeGrid)
         {
+            var sinkComp = new MyResourceSinkComponent();
+            sinkComp.Init(
+                MyStringHash.GetOrCompute("Defense"),
+                MyEnergyConstants.MAX_REQUIRED_POWER_SHIP_GRINDER,
+                ComputeRequiredPower);
+            sinkComp.IsPoweredChanged += Receiver_IsPoweredChanged;
+            ResourceSink = sinkComp;
+
             base.Init(objectBuilder, cubeGrid);
 
-            m_entitiesInContact = new Dictionary<MyEntity, int>();
+            m_entitiesInContact = new HashSet<MyEntity>();
             m_blocksToActivateOn = new HashSet<MySlimBlock>();
             m_tempBlocksBuffer = new HashSet<MySlimBlock>();
 
@@ -106,19 +130,16 @@ namespace Sandbox.Game.Weapons
             float inventoryVolume = def.Size.X * cubeGrid.GridSize*def.Size.Y *cubeGrid.GridSize* def.Size.Z * cubeGrid.GridSize * 0.5f;
             Vector3 inventorySize = new Vector3(def.Size.X, def.Size.Y, def.Size.Z * 0.5f);
 
-            m_inventory = new MyInventory(inventoryVolume, inventorySize, MyInventoryFlags.CanSend, this);
-            m_inventory.Init(typedBuilder.Inventory);
+            if (this.GetInventory() == null) // could be already initialized as component
+            {
+                MyInventory inventory = new MyInventory(inventoryVolume, inventorySize, MyInventoryFlags.CanSend);
+                Components.Add<MyInventoryBase>(inventory);
+                inventory.Init(typedBuilder.Inventory);
+            }
+            Debug.Assert(this.GetInventory().Owner == this, "Ownership was not set!");
 
             SlimBlock.UsesDeformation = false;
             SlimBlock.DeformationRatio = typedBuilder.DeformationRatio; // 3x times harder for destruction by high speed
-
-			var sinkComp = new MyResourceSinkComponent();
-			sinkComp.Init(
-                MyStringHash.GetOrCompute("Defense"),
-                MyEnergyConstants.MAX_REQUIRED_POWER_SHIP_GRINDER,
-                ComputeRequiredPower);
-			sinkComp.IsPoweredChanged += Receiver_IsPoweredChanged;
-	        ResourceSink = sinkComp;
 
             Enabled = typedBuilder.Enabled;
             UseConveyorSystem = typedBuilder.UseConveyorSystem;
@@ -132,7 +153,7 @@ namespace Sandbox.Game.Weapons
             IsWorkingChanged += MyShipToolBase_IsWorkingChanged;
 			ResourceSink.Update();
 
-            NeedsUpdate |= MyEntityUpdateEnum.EACH_100TH_FRAME | MyEntityUpdateEnum.EACH_10TH_FRAME | MyEntityUpdateEnum.EACH_FRAME;
+            NeedsUpdate |= MyEntityUpdateEnum.EACH_10TH_FRAME | MyEntityUpdateEnum.EACH_FRAME;
         }
 
         public override MyObjectBuilder_CubeBlock GetObjectBuilderCubeBlock(bool copy = false)
@@ -140,7 +161,7 @@ namespace Sandbox.Game.Weapons
             var ob = base.GetObjectBuilderCubeBlock(copy);
 
             MyObjectBuilder_ShipToolBase obShipToolBase = (MyObjectBuilder_ShipToolBase)ob;
-            obShipToolBase.Inventory = m_inventory.GetObjectBuilder();
+            obShipToolBase.Inventory = this.GetInventory().GetObjectBuilder();
             obShipToolBase.UseConveyorSystem = UseConveyorSystem;
 
             return obShipToolBase;
@@ -148,19 +169,19 @@ namespace Sandbox.Game.Weapons
 
         public override void OnRemovedByCubeBuilder()
         {
-            ReleaseInventory(m_inventory);
+            ReleaseInventory(this.GetInventory());
             base.OnRemovedByCubeBuilder();
         }
 
         public override void OnDestroy()
         {
-            ReleaseInventory(m_inventory, true);
+            ReleaseInventory(this.GetInventory(), true);
             base.OnDestroy();
         }
 
         private void LoadDummies()
         {
-            var finalModel = Engine.Models.MyModels.GetModelOnlyDummies(BlockDefinition.Model);
+            var finalModel = VRage.Game.Models.MyModels.GetModelOnlyDummies(BlockDefinition.Model);
             foreach (var dummy in finalModel.Dummies)
             {
                 if (dummy.Key.ToLower().Contains("detector_shiptool"))
@@ -170,71 +191,16 @@ namespace Sandbox.Game.Weapons
 
                     Matrix blockMatrix = this.PositionComp.LocalMatrix;
                     Vector3 gridDetectorPosition = Vector3.Transform(matrix.Translation, blockMatrix);
-
                     m_detectorSphere = new BoundingSphere(gridDetectorPosition, radius);
-
-                    var phantom = new HkPhantomCallbackShape(phantom_Enter, phantom_Leave);
-                    var sphereShape = new HkSphereShape(radius);
-                    var detectorShape = new HkBvShape(sphereShape, phantom, HkReferencePolicy.TakeOwnership);
-
-                    Physics = new Engine.Physics.MyPhysicsBody(this, RigidBodyFlag.RBF_DEFAULT);
-                    Physics.IsPhantom = true;
-                    Physics.CreateFromCollisionObject(detectorShape, matrix.Translation, WorldMatrix, null, MyPhysics.ObjectDetectionCollisionLayer);
-                    detectorShape.Base.RemoveReference();
                     break;
                 }
             }
         }
 
-        private void phantom_Leave(HkPhantomCallbackShape shape, HkRigidBody body)
+        protected void SetBuildingMusic(int amount)
         {
-            VRage.ProfilerShort.Begin("ShipToolLeave");
-            var entities = body.GetAllEntities();
-            foreach (var ientity in entities)
-            {
-                if (!CanInteractWith(ientity))
-                    continue;
-
-                var entity = ientity as MyEntity;
-
-                int entityCounter;
-                bool registered = m_entitiesInContact.TryGetValue(entity, out entityCounter);
-          //      Debug.Assert(registered, "Unregistering not registered entity from ship tool");
-                if (!registered)
-                    continue;
-
-                m_entitiesInContact.Remove(entity);
-                if (entityCounter > 1)
-                    m_entitiesInContact.Add(entity, entityCounter - 1);
-            }
-            entities.Clear();
-            VRage.ProfilerShort.End();
-        }
-
-        private void phantom_Enter(HkPhantomCallbackShape shape, HkRigidBody body)
-        {
-            VRage.ProfilerShort.Begin("ShipToolEnter");
-            var entities = body.GetAllEntities();
-            foreach (var ientity in entities)
-            {
-                if (!CanInteractWith(ientity))
-                    continue;
-
-                var entity = ientity as MyEntity;
-
-                int entityCounter;
-                if (m_entitiesInContact.TryGetValue(entity, out entityCounter))
-                {
-                    m_entitiesInContact.Remove(entity);
-                    m_entitiesInContact.Add(entity, entityCounter + 1);
-                }
-                else
-                {
-                    m_entitiesInContact.Add(entity, 1);
-                }
-            }
-            entities.Clear();
-            VRage.ProfilerShort.End();
+            if (MySession.Static != null && controller == MySession.Static.LocalCharacter && MyMusicController.Static != null)
+                MyMusicController.Static.Building(amount);
         }
 
         protected virtual bool CanInteractWithSelf
@@ -276,7 +242,6 @@ namespace Sandbox.Game.Weapons
 
         void MyShipToolBase_IsWorkingChanged(MyCubeBlock obj)
         {
-            ResourceSink.Update();
             UpdateActivationState();
         }
 
@@ -289,7 +254,9 @@ namespace Sandbox.Game.Weapons
 
         private void UpdateActivationState()
         {
-			if ((Enabled || WantsToActivate) && IsFunctional && ResourceSink.IsPowered)
+            if (ResourceSink != null)
+                ResourceSink.Update();
+            if ((Enabled || WantsToActivate) && IsFunctional && ResourceSink.IsPoweredByType(MyResourceDistributorComponent.ElectricityId))
             {
                 StartShooting();
             }
@@ -301,7 +268,7 @@ namespace Sandbox.Game.Weapons
 
         private float ComputeRequiredPower()
         {
-			return (IsFunctional && (Enabled || WantsToActivate)) ? ResourceSink.MaxRequiredInput : 0f;
+            return (IsFunctional && (Enabled || WantsToActivate)) ? ResourceSink.MaxRequiredInputByType(MyResourceDistributorComponent.ElectricityId) : 0f;
         }
 
         public override void UpdateAfterSimulation()
@@ -334,7 +301,7 @@ namespace Sandbox.Game.Weapons
 
         private void UpdateAnimationCommon()
         {
-            UpdateAnimation(m_isActivated);
+            UpdateAnimation(m_isActivated || IsHeatingUp);
 
             if (m_isActivatedOnSomething && m_effectsSet == false)
             {
@@ -366,11 +333,23 @@ namespace Sandbox.Game.Weapons
             }
 
             m_isActivatedOnSomething = false;
+            ProfilerShort.Begin("Query");
+            var res = MyEntities.GetTopMostEntitiesInSphere(ref globalSphere);
+            m_entitiesInContact.Clear();
+            foreach (MyEntity entity in res)
+            {
+                var rootEntity = entity.GetTopMostParent();
+                if (CanInteractWith(rootEntity))
+                    m_entitiesInContact.Add(rootEntity);
+            }
+            res.Clear();
+            ProfilerShort.End();
 
+            //TODO:cache blocks on this grid
             foreach (var entry in m_entitiesInContact)
             {
-                MyCubeGrid grid = entry.Key as MyCubeGrid;
-                MyCharacter character = entry.Key as MyCharacter;
+                MyCubeGrid grid = entry as MyCubeGrid;
+                MyCharacter character = entry as MyCharacter;
 
                 if (grid != null)
                 {
@@ -385,8 +364,8 @@ namespace Sandbox.Game.Weapons
                         damageType = MyDamageType.Grind;
                     else if (this is IMyShipWelder)
                         damageType = MyDamageType.Weld;
-
-                    character.DoDamage(20, damageType, true, attackerId: EntityId);
+                    if (globalSphere.Intersects(character.PositionComp.WorldAABB))
+                        character.DoDamage(20, damageType, true, attackerId: EntityId);
                 }
             }
 
@@ -406,6 +385,13 @@ namespace Sandbox.Game.Weapons
 
             StopEffects();
             StopLoopSound();
+        }
+
+        public override void OnAddedToScene(object source)
+        {
+            //Reload dummies in order to update local position of detector component (else the targeting position may differ!!!)
+            LoadDummies();
+            base.OnAddedToScene(source);
         }
 
         protected override void Closing()
@@ -439,8 +425,8 @@ namespace Sandbox.Game.Weapons
 
         protected virtual void StartShooting()
         {
-            Physics.Enabled = true;
             m_isActivated = true;
+            NeedsUpdate |= MyEntityUpdateEnum.EACH_FRAME;
         }
 
         protected virtual void StopShooting()
@@ -465,10 +451,10 @@ namespace Sandbox.Game.Weapons
             throw new NotImplementedException();
         }
 
-        public void OnControlAcquired(Entities.Character.MyCharacter owner)
+        public virtual void OnControlAcquired(Entities.Character.MyCharacter owner)
         { }
 
-        public void OnControlReleased()
+        public virtual void OnControlReleased()
         {
             if (!Enabled && !Closed)
                 StopShooting();
@@ -477,25 +463,9 @@ namespace Sandbox.Game.Weapons
         public void DrawHud(IMyCameraController camera, long playerId)
         { }
 
-        public int InventoryCount
-        {
-            get { return 1; }
-        }
-
-        public MyInventory GetInventory(int index)
-        {
-            Debug.Assert(index == 0);
-            return m_inventory;
-        }
-
         public void SetInventory(MyInventory inventory, int index)
         {
-            m_inventory = inventory;
-        }
-
-        public MyInventoryOwnerTypeEnum InventoryOwnerType
-        {
-            get { return MyInventoryOwnerTypeEnum.System; }
+            Components.Add<MyInventoryBase>( inventory);
         }
 
         public bool UseConveyorSystem
@@ -506,7 +476,7 @@ namespace Sandbox.Game.Weapons
             }
             set
             {
-                m_useConveyorSystem = value;
+                m_useConveyorSystem.Value = value;
             }
         }
 
@@ -562,11 +532,13 @@ namespace Sandbox.Game.Weapons
             return true;
         }
 
-        public void Shoot(MyShootActionEnum action, Vector3 direction, string gunAction)
+        public void Shoot(MyShootActionEnum action, Vector3 direction, Vector3D? overrideWeaponPos, string gunAction)
         {
             if (action != MyShootActionEnum.PrimaryAction) return;
 
-            if (m_shootHeatup < MyShipGrinderConstants.GRINDER_HEATUP_FRAMES)
+            NeedsUpdate |= MyEntityUpdateEnum.EACH_FRAME;
+
+            if (m_shootHeatup < HeatUpFrames)
             {
                 m_shootHeatup++;
                 return;
@@ -607,6 +579,62 @@ namespace Sandbox.Game.Weapons
         {
             get { return null; }
         }
-        bool IMyShipToolBase.UseConveyorSystem { get { return (this as IMyInventoryOwner).UseConveyorSystem; } }
+        bool ModAPI.Ingame.IMyShipToolBase.UseConveyorSystem { get { return UseConveyorSystem; } }
+
+        public void UpdateSoundEmitter()
+        {
+            if (m_soundEmitter != null)
+                m_soundEmitter.Update();
+        }
+
+        #region IMyInventoryOwner implementation
+
+        int IMyInventoryOwner.InventoryCount
+        {
+            get { return InventoryCount; }
+        }
+
+        long IMyInventoryOwner.EntityId
+        {
+            get { return EntityId; }
+        }
+
+        bool IMyInventoryOwner.HasInventory
+        {
+            get { return HasInventory; }
+        }
+
+        bool IMyInventoryOwner.UseConveyorSystem
+        {
+            get
+            {
+                return UseConveyorSystem;
+            }
+            set
+            {
+                UseConveyorSystem = value;
+            }
+        }
+
+        IMyInventory IMyInventoryOwner.GetInventory(int index)
+        {
+            return MyEntityExtensions.GetInventory(this, index);
+        }
+
+        #endregion
+
+        #region IMyConveyorEndpointBlock implementation
+
+        public virtual Sandbox.Game.GameSystems.Conveyors.PullInformation GetPullInformation()
+        {
+            return null;
+        }
+
+        public virtual Sandbox.Game.GameSystems.Conveyors.PullInformation GetPushInformation()
+        {
+            return null;
+        }
+
+        #endregion
     }
 }

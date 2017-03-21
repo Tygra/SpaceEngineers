@@ -1,5 +1,7 @@
 ﻿using KeenSoftwareHouse.Library.IO;
+#if !XB1 // XB1_NOPROTOBUF
 using ProtoBuf.Meta;
+#endif // !XB1
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -11,8 +13,8 @@ using System.Text;
 using System.Xml;
 using System.Xml.Serialization;
 using VRage.FileSystem;
+using VRage.Game;
 using VRage.Library.Collections;
-using VRage.Library.Utils;
 using VRage.Plugins;
 using VRage.Serialization;
 using VRage.Utils;
@@ -21,13 +23,10 @@ namespace VRage.ObjectBuilders
 {
     public class MyObjectBuilderSerializer
     {
-        private static readonly MyObjectFactory<MyObjectBuilderDefinitionAttribute, MyObjectBuilder_Base> m_objectFactory;
-        static readonly List<Type> m_serializationTypes = new List<Type>();
-        static readonly Dictionary<Type, XmlSerializer> m_serializersByType = new Dictionary<Type, XmlSerializer>();
-        static readonly Dictionary<string, XmlSerializer> m_serializersBySerializedName = new Dictionary<string, XmlSerializer>();
-        static readonly Dictionary<Type, string> m_serializedNameByType = new Dictionary<Type, string>();
-
-        public static readonly RuntimeTypeModel Serializer;
+        private static MyObjectFactory<MyObjectBuilderDefinitionAttribute, MyObjectBuilder_Base> m_objectFactory;
+#if !XB1 // XB1_NOPROTOBUF
+        public static RuntimeTypeModel Serializer;
+#endif // !XB1
         public static readonly MySerializeInfo Dynamic = new MySerializeInfo(MyObjectFlags.Dynamic, MyPrimitiveFlags.None, 0, SerializeDynamic, null, null);
         
         public enum XmlCompression
@@ -38,81 +37,40 @@ namespace VRage.ObjectBuilders
 
         static MyObjectBuilderSerializer()
         {
+#if !XB1 // XB1_NOPROTOBUF
             Serializer = TypeModel.Create();
             Serializer.AutoAddMissingTypes = true;
             Serializer.UseImplicitZeroDefaults = false;
-
+#endif // !XB1
             m_objectFactory = new MyObjectFactory<MyObjectBuilderDefinitionAttribute, MyObjectBuilder_Base>();
-
-            m_objectFactory.RegisterFromAssembly(Assembly.GetExecutingAssembly());
-            m_objectFactory.RegisterFromAssembly(MyPlugins.SandboxAssembly); //TODO: Will be removed 
-            m_objectFactory.RegisterFromAssembly(MyPlugins.GameAssembly);
-            m_objectFactory.RegisterFromAssembly(MyPlugins.UserAssembly);
-
-            LoadSerializers();
         }
 
-        #region Definitions
-
-        private static void LoadSerializers()
+        public static void RegisterFromAssembly(Assembly assembly)
         {
+            m_objectFactory.RegisterFromAssembly(assembly);
+        }
+
+        // Load (from dll or create at runtime) all serializers at once.
+        public static void LoadSerializers()
+        {
+            int index = 0;
             foreach (var definition in m_objectFactory.Attributes)
             {
-                m_serializationTypes.Add(definition.ProducedType);
+                index++;
                 var typeId = (MyRuntimeObjectBuilderId)(MyObjectBuilderType)definition.ProducedType;
+#if !XB1 // XB1_NOPROTOBUF
                 Serializer.Add(definition.ProducedType.BaseType, true)
                     .AddSubType(typeId.Value * 1000, definition.ProducedType);
-            }
+#endif // !XB1
 
-            foreach (var type in m_serializationTypes)
-            {
-                try
-                {
-                    // This will load serializers from Sandbox.Common.XmlSerializers.dll
-                    var serializer = new XmlSerializer(type);
-                    m_serializersByType.Add(type, serializer);
-
-                    {
-                        string serializedName = type.Name;
-                        var xmlTypeAttributes = type.GetCustomAttributes(typeof(XmlTypeAttribute), false);
-                        if (xmlTypeAttributes.Length != 0)
-                        {
-                            Debug.Assert(xmlTypeAttributes.Length == 1);
-                            serializedName = (xmlTypeAttributes[0] as XmlTypeAttribute).TypeName;
-                        }
-                        m_serializersBySerializedName.Add(serializedName, serializer);
-                        m_serializedNameByType.Add(type, serializedName);
-                    }
-                }
-                catch (Exception e)
-                {
-                    throw new InvalidOperationException("Error creating XML serializer for type " + type.Name, e);
-                }
             }
         }
-
-        public static XmlSerializer GetSerializer(Type type)
-        {
-            return m_serializersByType[type];
-        }
-
-        public static string GetSerializedName(Type type)
-        {
-            return m_serializedNameByType[type];
-        }
-
-        public static XmlSerializer GetSerializer(string serializedName)
-        {
-            return m_serializersBySerializedName[serializedName];
-        }
-
-        #endregion
 
         #region Serialization
 
         private static void SerializeXMLInternal(Stream writeTo, MyObjectBuilder_Base objectBuilder, Type serializeAsType = null)
         {
-            XmlSerializer serializer = m_serializersByType[serializeAsType ?? objectBuilder.GetType()];
+            XmlSerializer serializer = MyXmlSerializerManager.GetSerializer(serializeAsType ?? objectBuilder.GetType());
             serializer.Serialize(writeTo, objectBuilder);
         }
 
@@ -159,7 +117,7 @@ namespace VRage.ObjectBuilders
                 using (var writeStream = compress ? fileStream.WrapGZip() : fileStream)
                 {
                     long startPos = fileStream.Position;
-                    XmlSerializer serializer = m_serializersByType[serializeAsType ?? objectBuilder.GetType()];
+                    XmlSerializer serializer = MyXmlSerializerManager.GetSerializer(serializeAsType ?? objectBuilder.GetType());
                     serializer.Serialize(writeStream, objectBuilder);
                     sizeInBytes = (ulong)(fileStream.Position - startPos); // Length of compressed stream
                 }
@@ -169,6 +127,7 @@ namespace VRage.ObjectBuilders
                 MyLog.Default.WriteLine("Error: " + path + " failed to serialize.");
                 MyLog.Default.WriteLine(e.ToString());
 
+#if !XB1
 #if DEBUG
                 var io = e as IOException;
                 if (io != null && io.IsFileLocked())
@@ -188,6 +147,7 @@ namespace VRage.ObjectBuilders
                     }
                 }
 #endif
+#endif // !XB1
 
                 sizeInBytes = 0;
 
@@ -235,7 +195,35 @@ namespace VRage.ObjectBuilders
             return result;
         }
 
-        private static bool DeserializeXML(Stream reader, out MyObjectBuilder_Base objectBuilder, Type builderType)
+        public static bool DeserializeXML(string path, out MyObjectBuilder_Base objectBuilder, Type builderType) 
+        {
+            bool result = false;
+            objectBuilder = null;
+            using (var fileStream = MyFileSystem.OpenRead(path))
+            {
+                if (fileStream != null)
+                    using (var readStream = fileStream.UnwrapGZip())
+                    {
+                        if (readStream != null)
+                        {
+                            result = DeserializeXML(readStream, out objectBuilder, builderType);
+                        }
+                    }
+            }
+
+            if (!result)
+                MyLog.Default.WriteLine(string.Format("Failed to deserialize file '{0}'", path));
+
+            return result;
+        }
+
+        public static bool DeserializeXML(Stream reader, out MyObjectBuilder_Base objectBuilder, Type builderType)
+        {
+            return DeserializeXML(reader, out objectBuilder, builderType, null);
+        }
+
+        /// <param name="typeOverrideMap">Allows override of the type of the definition. Refer to MyDefinitionXmlSerializer</param>
+        internal static bool DeserializeXML(Stream reader, out MyObjectBuilder_Base objectBuilder, Type builderType, Dictionary<string, string> typeOverrideMap)
         {
             Debug.Assert(typeof(MyObjectBuilder_Base).IsAssignableFrom(builderType));
             Debug.Assert(reader != null);
@@ -244,16 +232,21 @@ namespace VRage.ObjectBuilders
             objectBuilder = null;
             try
             {
-                XmlSerializer serializer = m_serializersByType[builderType];
+                XmlSerializer serializer = MyXmlSerializerManager.GetSerializer(builderType);
                 Debug.Assert(serializer != null);
-                objectBuilder = (MyObjectBuilder_Base)serializer.Deserialize(XmlReader.Create(reader, new XmlReaderSettings() { CheckCharacters = false }));
+
+                XmlReaderSettings settings = new XmlReaderSettings() { CheckCharacters = true };
+                MyXmlTextReader xmlReader = new MyXmlTextReader(reader, settings);
+                xmlReader.DefinitionTypeOverrideMap = typeOverrideMap;
+      
+                objectBuilder = (MyObjectBuilder_Base)serializer.Deserialize(xmlReader);
             }
             catch (Exception e)
             {
                 MyLog.Default.WriteLine("ERROR: Exception during objectbuilder read! (xml): " + builderType.Name);
                 MyLog.Default.WriteLine(e);
-                if (Debugger.IsAttached)
-                    Debugger.Break();
+                //if (Debugger.IsAttached)
+                //    Debugger.Break();
                 return false;
             }
 
@@ -268,7 +261,7 @@ namespace VRage.ObjectBuilders
                 using (GZipStream gz = new GZipStream(reader, CompressionMode.Decompress))
                 using (BufferedStream buffer = new BufferedStream(gz, 0x8000))
                 {
-                    XmlSerializer serializer = m_serializersByType[typeof(T)];
+                    XmlSerializer serializer = MyXmlSerializerManager.GetSerializer(typeof(T));
                     objectBuilder = (T)serializer.Deserialize(buffer);
                 }
             }
@@ -347,27 +340,14 @@ namespace VRage.ObjectBuilders
             return clone;
         }
 
-        /// <summary>
-        /// Performs shallow copy of data between members of the same name and type from source to target.
-        /// This method can be slow and inefficient, so use only when needed.
-        /// </summary>
-        public static void MemberwiseAssignment(MyObjectBuilder_Base source, MyObjectBuilder_Base target)
+        public static void UnregisterAssembliesAndSerializers()
         {
-            var sourceFields = source.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance | BindingFlags.GetField | BindingFlags.GetProperty);
-            var targetFields = target.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance | BindingFlags.SetField | BindingFlags.SetProperty);
-            foreach (var sourceField in sourceFields)
-            {
-                var targetField = targetFields.FirstOrDefault(delegate(FieldInfo fieldInfo)
-                {
-                    return fieldInfo.FieldType == sourceField.FieldType &&
-                        fieldInfo.Name == sourceField.Name;
-                });
-                if (targetField == default(FieldInfo))
-                    continue;
-
-                targetField.SetValue(target, sourceField.GetValue(source));
-            }
+            m_objectFactory = new MyObjectFactory<MyObjectBuilderDefinitionAttribute, MyObjectBuilder_Base>();
+#if !XB1 // XB1_NOPROTOBUF
+            Serializer = TypeModel.Create(); // create empty protobuf serializer
+            Serializer.AutoAddMissingTypes = true;
+            Serializer.UseImplicitZeroDefaults = false;
+#endif // !XB1
         }
-
     }
 }

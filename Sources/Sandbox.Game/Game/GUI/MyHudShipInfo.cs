@@ -6,6 +6,7 @@ using System;
 using System.Text;
 using Sandbox.Game.EntityComponents;
 using VRage;
+using VRage.Game;
 using VRage.Utils;
 
 
@@ -206,16 +207,6 @@ namespace Sandbox.Game.Gui
             }
         }
         private float m_fuelRemainingTime;
-
-		private bool m_allEnabledRecently = false;
-		public bool AllEnabledRecently
-		{
-			get { return m_allEnabledRecently; }
-			set
-			{
-				m_allEnabledRecently = value;
-			}
-		}
 
         public MyResourceStateEnum ResourceState
         {

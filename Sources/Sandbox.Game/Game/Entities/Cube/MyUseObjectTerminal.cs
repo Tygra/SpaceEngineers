@@ -4,42 +4,48 @@ using Sandbox.Game.Gui;
 using Sandbox.Game.Localization;
 using Sandbox.ModAPI;
 using Sandbox.Common;
+using Sandbox.Game.World;
 using VRage.Game.Entity.UseObject;
 using VRage.Import;
 using VRage.Input;
 using VRage.ModAPI;
 using VRageMath;
+using VRage.Game;
+using VRageRender.Import;
+using VRage.Game.ModAPI;
+using Sandbox.Game.World;
 
 namespace Sandbox.Game.Entities.Cube
 {
     [MyUseObject("terminal")]
-    public class MyUseObjectTerminal : IMyUseObject
+    public class MyUseObjectTerminal : MyUseObjectBase
     {
         public readonly MyCubeBlock Block;
         public readonly Matrix LocalMatrix;
 
         public MyUseObjectTerminal(IMyEntity owner, string dummyName, MyModelDummy dummyData, uint key)
+            : base(owner, dummyData)
         {
             Block = owner as MyCubeBlock;
             LocalMatrix = dummyData.Matrix;
         }
 
-        float IMyUseObject.InteractiveDistance
+        public override float InteractiveDistance
         {
             get { return MyConstants.DEFAULT_INTERACTIVE_DISTANCE; }
         }
 
-        MatrixD IMyUseObject.ActivationMatrix
+        public override MatrixD ActivationMatrix
         {
             get { return LocalMatrix * Block.WorldMatrix; }
         }
 
-        MatrixD IMyUseObject.WorldMatrix
+        public override MatrixD WorldMatrix
         {
             get { return Block.WorldMatrix; }
         }
 
-        int IMyUseObject.RenderObjectID
+        public override int RenderObjectID
         {
             get
             {
@@ -47,21 +53,26 @@ namespace Sandbox.Game.Entities.Cube
             }
         }
 
-        bool IMyUseObject.ShowOverlay
+        public override int InstanceID
+        {
+            get { return -1; }
+        }
+
+        public override bool ShowOverlay
         {
             get { return true; }
         }
 
-        UseActionEnum IMyUseObject.SupportedActions
+        public override UseActionEnum SupportedActions
         {
             get { return UseActionEnum.OpenTerminal | UseActionEnum.OpenInventory; }
         }
 
-        void IMyUseObject.Use(UseActionEnum actionEnum, IMyEntity entity)
+        public override void Use(UseActionEnum actionEnum, IMyEntity entity)
         {
             var user = entity as MyCharacter;
             var relation = Block.GetUserRelationToOwner(user.ControllerInfo.ControllingIdentityId);
-            if (!relation.IsFriendly())
+            if (!relation.IsFriendly() && !MySession.Static.AdminSettings.HasFlag(AdminSettingsEnum.UseTerminals))
             {
                 if (user.ControllerInfo.IsLocallyHumanControlled())
                 {
@@ -76,13 +87,13 @@ namespace Sandbox.Game.Entities.Cube
                     MyGuiScreenTerminal.Show(MyTerminalPageEnum.ControlPanel, user, Block);
                     break;
                 case UseActionEnum.OpenInventory:
-                    if (Block as IMyInventoryOwner != null)
+                    if (Block.GetInventory(0) as MyInventory != null)
                         MyGuiScreenTerminal.Show(MyTerminalPageEnum.Inventory, user, Block);
                     break;
             }
         }
 
-        MyActionDescription IMyUseObject.GetActionInfo(UseActionEnum actionEnum)
+        public override MyActionDescription GetActionInfo(UseActionEnum actionEnum)
         {
             return new MyActionDescription()
             {
@@ -94,16 +105,16 @@ namespace Sandbox.Game.Entities.Cube
             };
         }
 
-        bool IMyUseObject.ContinuousUsage
+        public override bool ContinuousUsage
         {
             get { return false; }
         }
 
-        bool IMyUseObject.HandleInput() { return false; }
+        public override bool HandleInput() { return false; }
 
-        void IMyUseObject.OnSelectionLost() { }
+        public override void OnSelectionLost() { }
 
-        bool IMyUseObject.PlayIndicatorSound
+        public override bool PlayIndicatorSound
         {
             get { return true; }
         }

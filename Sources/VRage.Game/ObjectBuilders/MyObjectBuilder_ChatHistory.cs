@@ -4,7 +4,7 @@ using System.Xml.Serialization;
 using System.ComponentModel;
 using System.Collections.Generic;
 
-namespace Sandbox.Common.ObjectBuilders
+namespace VRage.Game
 {
     [ProtoContract]
     [MyObjectBuilderDefinition]
@@ -102,5 +102,11 @@ namespace Sandbox.Common.ObjectBuilders
         [ProtoMember]
         [XmlElement(ElementName = "I")]
         public long IdentityIdUniqueNumber;
+        [ProtoMember]
+        [XmlAttribute("a"), DefaultValue("")]
+        public string Author;
+        [ProtoMember]
+        [XmlAttribute("f"), DefaultValue(MyFontEnum.Blue)]
+        public string Font;
     }
 }

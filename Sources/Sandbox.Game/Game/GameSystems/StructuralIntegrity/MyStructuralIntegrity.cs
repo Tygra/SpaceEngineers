@@ -12,9 +12,9 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
 using VRage.Utils;
-using VRage.Voxels;
 using VRageMath;
 using ConstraintKey = VRage.MyTuple<Sandbox.Game.Entities.Cube.MySlimBlock, Sandbox.Game.Entities.Cube.MySlimBlock>;
+using Sandbox.Game.World;
 
 #endregion
 
@@ -22,7 +22,7 @@ namespace Sandbox.Game.GameSystems.StructuralIntegrity
 {
     public class MyStructuralIntegrity
     {
-        public static bool Enabled = false;
+        public static bool Enabled { get { return MyFakes.ENABLE_STRUCTURAL_INTEGRITY && MySession.Static != null && MySession.Static.Settings.EnableStructuralSimulation; } }
         public bool EnabledOnlyForDraw = false;
         public static float MAX_SI_TENSION = 10;
 
@@ -126,7 +126,7 @@ namespace Sandbox.Game.GameSystems.StructuralIntegrity
                     }
                 }
 
-                m_cubeGrid.TestDynamic = true;
+                m_cubeGrid.TestDynamic = MyCubeGrid.MyTestDynamicReason.GridSplit;
             }
         }
 
@@ -142,11 +142,11 @@ namespace Sandbox.Game.GameSystems.StructuralIntegrity
             details.SetParticleMass(10000);
             //details.ZeroColidingParticleVelocity();
             details.Flag = details.Flag | HkdFractureImpactDetails.Flags.FLAG_DONT_RECURSE;
-            if (m_cubeGrid.Physics.HavokWorld.DestructionWorld != null)
+            if (m_cubeGrid.GetPhysicsBody().HavokWorld.DestructionWorld != null)
             {
                 MyPhysics.FractureImpactDetails destruction = new MyPhysics.FractureImpactDetails();
                 destruction.Details = details;
-                destruction.World = m_cubeGrid.Physics.HavokWorld;
+                destruction.World = m_cubeGrid.GetPhysicsBody().HavokWorld;
                 destruction.Entity = m_cubeGrid;
                 destruction.ContactInWorld = worldCenter;
                 MyPhysics.EnqueueDestruction(destruction);

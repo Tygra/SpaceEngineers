@@ -11,6 +11,8 @@ using System.Linq;
 using System.Text;
 using VRage;
 using VRage;
+using VRage.Game.Entity;
+using VRage.Profiler;
 using VRageMath;
 using VRageRender;
 
@@ -68,6 +70,14 @@ namespace Sandbox.Game.AI.Navigation
             get
             {
                 return m_stuckDetection.IsStuck;
+            }
+        }
+
+        public Vector3D TargetPoint
+        {
+            get
+            {
+                return m_destinationSphere.GetDestination();
             }
         }
 
@@ -177,7 +187,7 @@ namespace Sandbox.Game.AI.Navigation
             //m_steerings.Add(new MyCollisionDetectionSteering(this));
 
             m_aiming = new MyBotAiming(this);
-            m_stuckDetection = new MyStuckDetection(0.01f, MathHelper.ToRadians(2f));
+            m_stuckDetection = new MyStuckDetection(0.05f, MathHelper.ToRadians(2f));
 
             m_destinationSphere = new MyDestinationSphere(ref Vector3D.Zero, 0.0f);
 
@@ -204,8 +214,10 @@ namespace Sandbox.Game.AI.Navigation
             }
         }
 
-        public void Update()
+        public void Update(int behaviorTicks)
         {
+            m_stuckDetection.SetCurrentTicks(behaviorTicks);
+
             ProfilerShort.Begin("MyBotNavigation.Update");
             AssertIsValid();
 
@@ -247,6 +259,9 @@ namespace Sandbox.Game.AI.Navigation
             ProfilerShort.Begin("Steering accumulate correction");
             CorrectMovement(m_aiming.RotationHint);
             ProfilerShort.End();
+
+            if (m_speed < 0.1f)// hotfix for flickering of animation from running left to running right
+                m_speed = 0;
 
             ProfilerShort.Begin("MoveCharacter");
             MoveCharacter();
@@ -372,7 +387,7 @@ namespace Sandbox.Game.AI.Navigation
                             character.Down();
                         }
                     }
-                    character.MoveAndRotate(worldLocal * m_speed, new Vector2(rot.Y * 10.0f, rot.X * 10.0f), 0.0f);
+                    character.MoveAndRotate(worldLocal * m_speed, new Vector2(rot.Y * 30.0f, rot.X * 30.0f), 0.0f);
                 }
                 else if (m_speed == 0.0f)
                 {
@@ -420,7 +435,8 @@ namespace Sandbox.Game.AI.Navigation
         public void Goto(Vector3D position, float radius = 0.0f, MyEntity relativeEntity = null)
         {
             m_destinationSphere.Init(ref position, radius);
-            Goto(m_destinationSphere, relativeEntity);
+            Goto(m_destinationSphere, relativeEntity); 
+            //m_path.SetTarget(position, 0.5f, relativeEntity, 1);
         }
 
         /// <summary>
@@ -429,6 +445,8 @@ namespace Sandbox.Game.AI.Navigation
         /// </summary>
         public void Goto(IMyDestinationShape destination, MyEntity relativeEntity = null)
         {
+            if (MyAIComponent.Static.Pathfinding == null) return;
+
             var path = MyAIComponent.Static.Pathfinding.FindPathGlobal(PositionAndOrientation.Translation, destination, relativeEntity);
             if (path == null)
             {
@@ -439,14 +457,17 @@ namespace Sandbox.Game.AI.Navigation
             m_stuckDetection.Reset();
         }
 
-        public void GotoNoPath(Vector3D worldPosition, float radius = 0.0f, MyEntity relativeEntity = null)
+        public void GotoNoPath(Vector3D worldPosition, float radius = 0.0f, MyEntity relativeEntity = null, bool resetStuckDetection = true)
         {
             m_path.SetTarget(worldPosition, radius: radius, relativeEntity: relativeEntity, weight: 1.0f, fly: false);
-            m_stuckDetection.Reset();
+            if (resetStuckDetection)
+                m_stuckDetection.Reset();
         }
 
         public bool CheckReachability(Vector3D worldPosition, float threshold, MyEntity relativeEntity = null)
         {
+            if (MyAIComponent.Static.Pathfinding == null) return false;
+
             m_destinationSphere.Init(ref worldPosition, 0.0f);
             return MyAIComponent.Static.Pathfinding.ReachableUnderThreshold(PositionAndOrientation.Translation, m_destinationSphere, threshold);
         }
@@ -467,8 +488,7 @@ namespace Sandbox.Game.AI.Navigation
         public void Stop()
         {
             m_path.UnsetPath();
-
-            m_stuckDetection.Reset();
+            m_stuckDetection.Stop();
         }
 
         public void StopImmediate(bool forceUpdate = false)
@@ -479,7 +499,7 @@ namespace Sandbox.Game.AI.Navigation
                 MoveCharacter();
         }
 
-        public void FollowPath(MySmartPath path)
+        public void FollowPath(IMyPath path)
         {
             m_path.SetPath(path);
             m_stuckDetection.Reset();
@@ -561,6 +581,11 @@ namespace Sandbox.Game.AI.Navigation
                 MyRenderProxy.DebugDrawArrow3D(pos + ForwardVector, pos + ForwardVector + m_correction, Color.LightBlue, Color.LightBlue, false, text: "Correction");
                 //MyRenderProxy.DebugDrawLine3D(pos + ForwardVector, pos + ForwardVector + m_correction, Color.Yellow, Color.Yellow, false);
                 //MyRenderProxy.DebugDrawSphere(pos + ForwardVector + m_correction, 0.05f, Color.Yellow.ToVector3(), 1.0f, true);
+
+                if ( m_destinationSphere != null )
+                {
+                    m_destinationSphere.DebugDraw();
+                }
 
                 var character = this.BotEntity as MyCharacter;
                 if (character != null)

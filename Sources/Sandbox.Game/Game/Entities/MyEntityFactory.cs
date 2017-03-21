@@ -2,13 +2,11 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Text;
-using Sandbox.Common;
-using Sandbox.Common.ObjectBuilders;
-using Sandbox.Common.Components;
 using VRage;
 using VRage.ObjectBuilders;
-using VRage.Components;
+using VRage.Game.Components;
+using VRage.Game.Entity;
+using VRage.Profiler;
 
 namespace Sandbox.Game.Entities
 {
@@ -16,34 +14,42 @@ namespace Sandbox.Game.Entities
     {
         static MyObjectFactory<MyEntityTypeAttribute, MyEntity> m_objectFactory = new MyObjectFactory<MyEntityTypeAttribute, MyEntity>();
 
+        public static void RegisterDescriptor(MyEntityTypeAttribute descriptor, Type type)
+        {
+            if(type != null && descriptor != null)
+                m_objectFactory.RegisterDescriptor(descriptor, type);
+        }
+
         public static void RegisterDescriptorsFromAssembly(Assembly assembly)
         {
             if (assembly != null)
                 m_objectFactory.RegisterFromAssembly(assembly);
         }
 
-        public static MyEntity CreateEntity(MyObjectBuilder_Base builder)
+        public static MyEntity CreateEntity(MyObjectBuilder_Base builder, bool readyForReplication = true)
         {
-            return CreateEntity(builder.TypeId, builder.SubtypeName);
+            return CreateEntity(builder.TypeId, builder.SubtypeName, readyForReplication);
         }
 
-        public static MyEntity CreateEntity(MyObjectBuilderType typeId, string subTypeName = null)
+        public static MyEntity CreateEntity(MyObjectBuilderType typeId, string subTypeName = null, bool readyForReplication = true)
         {
             ProfilerShort.Begin("MyEntityFactory.CreateEntity(...)");
             MyEntity entity = m_objectFactory.CreateInstance(typeId);
             AddScriptGameLogic(entity, typeId, subTypeName);
+            entity.IsReadyForReplication = readyForReplication;
             ProfilerShort.End();
-            MyEntities.RaiseEntityCreated(entity);
+            MyEntities.RaiseEntityCreated(entity);            
             return entity;
         }
 
-        public static T CreateEntity<T>(MyObjectBuilder_Base builder) where T : MyEntity
+        public static T CreateEntity<T>(MyObjectBuilder_Base builder, bool readyForReplication = true) where T : MyEntity
         {
             ProfilerShort.Begin("MyEntityFactory.CreateEntity(...)");
             T entity = m_objectFactory.CreateInstance<T>(builder.TypeId);
             AddScriptGameLogic(entity, builder.GetType(), builder.SubtypeName);
+            entity.IsReadyForReplication = readyForReplication;
             ProfilerShort.End();
-            MyEntities.RaiseEntityCreated(entity);
+            MyEntities.RaiseEntityCreated(entity);           
             return entity;
         }
 
@@ -94,13 +100,4 @@ namespace Sandbox.Game.Entities
             return m_objectFactory.CreateObjectBuilder<MyObjectBuilder_EntityBase>(entity);
         }
     }
-
-    public class MyEntityTypeAttribute : MyFactoryTagAttribute
-    {
-        public MyEntityTypeAttribute(Type objectBuilderType, bool mainBuilder = true)
-            : base(objectBuilderType, mainBuilder)
-        {
-        }
-    }
-
 }

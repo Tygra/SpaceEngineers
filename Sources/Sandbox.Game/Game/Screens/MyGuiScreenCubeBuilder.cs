@@ -1,5 +1,7 @@
 ﻿#region Using
 
+using System;
+using System.Collections.Generic;
 using Sandbox.Common.ObjectBuilders;
 using Sandbox.Common;
 using Sandbox.Definitions;
@@ -10,8 +12,14 @@ using Sandbox.Game.SessionComponents;
 using Sandbox.Game.World;
 using Sandbox.Graphics.GUI;
 using System.Diagnostics;
+using System.Text;
+using Sandbox.Engine.Utils;
 using VRage;
+using VRage.Game;
+using VRage.Game.Definitions;
 using VRage.Input;
+using VRage.Library.Collections;
+using VRage.Profiler;
 using VRage.Utils;
 using VRageMath;
 
@@ -21,11 +29,8 @@ namespace Sandbox.Game.Gui
 {
     public class MyGuiScreenCubeBuilder : MyGuiScreenToolbarConfigBase
     {
-        MyGuiControlButton m_smallShipButton;
-        MyGuiControlButton m_largeShipButton;
-        MyGuiControlButton m_stationButton;
-        MyGuiControlBlockInfo m_blockInfoSmall;
-        MyGuiControlBlockInfo m_blockInfoLarge;
+        private MyGuiControlList m_blockInfoList;
+        private MyGuiControlBlockInfo.MyControlBlockInfoStyle m_blockInfoStyle;
 
         public MyGuiScreenCubeBuilder(int scrollOffset = 0, MyCubeBlock owner = null)
             : base(scrollOffset, owner)
@@ -56,38 +61,18 @@ namespace Sandbox.Game.Gui
 
             ProfilerShort.Begin("MyGuiScreenCubeBuilder.RecreateControls");
 
-            bool showRightControls = !(MySession.ControlledEntity is MyShipController) || MyToolbarComponent.GlobalBuilding;
-            //Disable right buttons if current spectator is official spectator
-            if (MySession.Static.SurvivalMode)
-                showRightControls &= !(MySession.IsCameraUserControlledSpectator() && !MyInput.Static.ENABLE_DEVELOPER_KEYS && MySession.Static.Settings.EnableSpectator);
+            m_gridBlocks.MouseOverIndexChanged += OnGridMouseOverIndexChanged;
+            m_gridBlocks.ItemSelected += OnSelectedItemChanged;
 
-            m_smallShipButton = (MyGuiControlButton)Controls.GetControlByName("ButtonSmall");
-            m_smallShipButton.Visible = showRightControls;
-            m_smallShipButton.ButtonClicked += smallShipButton_OnButtonClick;
-
-            m_largeShipButton = (MyGuiControlButton)Controls.GetControlByName("ButtonLarge");
-            m_largeShipButton.Visible = showRightControls;
-            m_largeShipButton.ButtonClicked += largeShipButton_OnButtonClick;
-
-            m_stationButton = (MyGuiControlButton)Controls.GetControlByName("ButtonStation");
-            m_stationButton.Visible = showRightControls;
-            m_stationButton.ButtonClicked += stationButton_OnButtonClick;
-
-            if (m_screenCubeGrid != null)
-            {
-                m_smallShipButton.Visible = false;
-                m_stationButton.Visible = false;
-                m_largeShipButton.Visible = false;
-            }
-			var style = new MyGuiControlBlockInfo.MyControlBlockInfoStyle()
+            m_blockInfoStyle = new MyGuiControlBlockInfo.MyControlBlockInfoStyle()
 			{
 				BlockNameLabelFont = MyFontEnum.White,
-				EnableBlockTypeLabel = true,
+				EnableBlockTypeLabel = false,
 				ComponentsLabelText = MySpaceTexts.HudBlockInfo_Components,
 				ComponentsLabelFont = MyFontEnum.Blue,
 				InstalledRequiredLabelText = MySpaceTexts.HudBlockInfo_Installed_Required,
 				InstalledRequiredLabelFont = MyFontEnum.Blue,
-				RequiredLabelText = MySpaceTexts.HudBlockInfo_Required,
+                RequiredLabelText = MyCommonTexts.HudBlockInfo_Required,
 				IntegrityLabelFont = MyFontEnum.White,
 				IntegrityBackgroundColor = new Vector4(78 / 255.0f, 116 / 255.0f, 137 / 255.0f, 1.0f),
 				IntegrityForegroundColor = new Vector4(0.5f, 0.1f, 0.1f, 1),
@@ -100,94 +85,166 @@ namespace Sandbox.Game.Gui
 				ComponentLineDefaultFont = MyFontEnum.White,
 				ComponentLineDefaultColor = new Vector4(0.6f, 0.6f, 0.6f, 1f),
 				ShowAvailableComponents = false,
-				EnableBlockTypePanel = true,
+                EnableBlockTypePanel = false,
 			};
-            m_blockInfoSmall = new MyGuiControlBlockInfo(style, false, false);
-            m_blockInfoSmall.Visible = false;
-            m_blockInfoSmall.IsActiveControl = false;
-            m_blockInfoSmall.BlockInfo = new MyHudBlockInfo();
-            m_blockInfoSmall.Position = new Vector2(0.28f, -0.04f);
-            m_blockInfoSmall.OriginAlign = MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP;
-            Controls.Add(m_blockInfoSmall);
-            m_blockInfoLarge = new MyGuiControlBlockInfo(style, false, true);
-            m_blockInfoLarge.Visible = false;
-            m_blockInfoLarge.IsActiveControl = false;
-            m_blockInfoLarge.BlockInfo = new MyHudBlockInfo();
-            m_blockInfoLarge.Position = new Vector2(0.28f, -0.06f);
-            m_blockInfoLarge.OriginAlign = MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_BOTTOM;
-            Controls.Add(m_blockInfoLarge);
+
+            m_blockInfoList = (MyGuiControlList)Controls.GetControlByName("BlockInfoPanel");
+            if (m_blockInfoList == null)
+                Debug.Fail("Someone changed CubeBuilder.gsc file in Content folder? Please check");
+
 
             ProfilerShort.End();
         }
 
-        public override void HandleInput(bool receivedFocusInThisUpdate)
+        private void OnSelectedItemChanged(MyGuiControlGrid arg1, MyGuiControlGrid.EventArgs arg2)
         {
-            base.HandleInput(receivedFocusInThisUpdate);
-            if (m_gridBlocks.Visible && m_gridBlocks.MouseOverItem != null && m_gridBlocks.MouseOverItem.UserData is GridItemUserData &&
-               (m_gridBlocks.MouseOverItem.UserData as GridItemUserData).ItemData is MyObjectBuilder_ToolbarItemCubeBlock)
+            OnGridMouseOverIndexChanged(arg1, arg2);
+        }
+
+        private void OnGridMouseOverIndexChanged(MyGuiControlGrid myGuiControlGrid, MyGuiControlGrid.EventArgs eventArgs)
+        {
+           
+            if (m_gridBlocks.Visible)
             {
-                var block = (m_gridBlocks.MouseOverItem.UserData as GridItemUserData).ItemData as MyObjectBuilder_ToolbarItemCubeBlock;
+                MyGuiControlGrid.Item gridItem = m_gridBlocks.MouseOverItem ?? m_gridBlocks.SelectedItem;
+
+                if (gridItem == null)
+                {
+                    m_blockInfoList.InitControls(new MyGuiControlBase[] { });
+                    return;
+                }
+
+                GridItemUserData userData = gridItem.UserData as GridItemUserData;
+                if (userData == null)
+                    return;
+
+                MyObjectBuilder_ToolbarItemCubeBlock itemData = userData.ItemData as MyObjectBuilder_ToolbarItemCubeBlock;
+                if (itemData == null)
+                    return;
+
                 MyDefinitionBase definition;
-                if (MyDefinitionManager.Static.TryGetDefinition(block.DefinitionId, out definition))
+                if (MyDefinitionManager.Static.TryGetDefinition(itemData.DefinitionId, out definition))
                 {
                     var group = MyDefinitionManager.Static.GetDefinitionGroup((definition as MyCubeBlockDefinition).BlockPairName);
 
-                    if (group.Large != null)
-                    {
-                        m_blockInfoLarge.BlockInfo.LoadDefinition(group.Large);
-                        m_blockInfoLarge.Visible = true;
-                    }
-                    else
-                        m_blockInfoLarge.Visible = false;
+                    List<MyGuiControlBase> blockInfos = null;
 
                     if (group.Small != null)
                     {
-                        m_blockInfoSmall.BlockInfo.LoadDefinition(group.Small);
-                        m_blockInfoSmall.Visible = true;
+                        var blockInfosSmall = GenerateBlockInfos(group.Small, ref m_blockInfoStyle);
+                        if (blockInfosSmall != null)
+                        {
+                            if (blockInfos == null)
+                                blockInfos = new List<MyGuiControlBase>();
+                            blockInfos.AddArray(blockInfosSmall);
+                        }
                     }
-                    else
-                        m_blockInfoSmall.Visible = false;
-                }
+ 
+                    if (group.Large != null)
+                    {
+                        var blockInfosLarge = GenerateBlockInfos(group.Large, ref m_blockInfoStyle);
+                        if (blockInfosLarge != null)
+                        {
+                            if (blockInfos == null)
+                                blockInfos = new List<MyGuiControlBase>();
+                            blockInfos.AddArray(blockInfosLarge);
+                        }
+                    }
 
+                    if (blockInfos != null)
+                        m_blockInfoList.InitControls(blockInfos);
+                    else
+                    {
+                        m_blockInfoList.InitControls(new MyGuiControlBase[] { });
+                    }
+
+                    //else
+                    //{
+                    //    bool blockSizeLarge = MyCubeBuilder.Static.CubeBuilderState.CubeSizeMode == MyCubeSize.Large;
+                    //    m_blockInfoList.InitControls(new MyGuiControlBase[]
+                    //    {
+                    //        GenerateSizeInfoLabel(blockSizeLarge),
+                    //        GenerateSizeNotAvailableText(blockSizeLarge)
+                    //    });
+                    //}
+                }
+                
             }
             else
             {
-                m_blockInfoSmall.Visible = false;
-                m_blockInfoLarge.Visible = false;
+                m_blockInfoList.InitControls(new MyGuiControlBase[] { });
             }
         }
 
-        void smallShipButton_OnButtonClick(MyGuiControlButton sender)
+        /// <summary>
+        /// Generates multiline text control indicating that block is not available.
+        /// </summary>
+        /// <param name="blockSizeLarge">Is block size large.</param>
+        /// <returns>Multiline text control with block not available info.</returns>
+        private MyGuiControlMultilineText GenerateSizeNotAvailableText(bool blockSizeLarge)
         {
-            CreateGrid(MyCubeSize.Small, isStatic: false);
+            MyGuiControlMultilineText textControl = new MyGuiControlMultilineText(size: new Vector2(0.2f, 0.1f), font: MyFontEnum.Red, showTextShadow: true, textAlign: MyGuiDrawAlignEnum.HORISONTAL_CENTER_AND_VERTICAL_CENTER);
+            string blockTypeLabelText = MyTexts.GetString(!blockSizeLarge ? MySpaceTexts.HudBlockInfo_LargeShip_Station : MySpaceTexts.HudBlockInfo_SmallShip);
+            textControl.AppendText(string.Format(MyTexts.GetString(MySpaceTexts.BlockSize_NotAvailable), blockTypeLabelText));
+            return textControl;
         }
 
-        void largeShipButton_OnButtonClick(MyGuiControlButton sender)
+        /// <summary>
+        /// Generates label control containing block size info.
+        /// </summary>
+        /// <param name="blockSizeLarge">Is block size large</param>
+        /// <returns>Label control with block size info</returns>
+        private MyGuiControlLabel GenerateSizeInfoLabel(bool blockSizeLarge)
         {
-            CreateGrid(MyCubeSize.Large, isStatic: false);
+            string blockTypeLabelText = MyTexts.GetString(blockSizeLarge ? MySpaceTexts.HudBlockInfo_LargeShip_Station : MySpaceTexts.HudBlockInfo_SmallShip);
+            return new MyGuiControlLabel(text: blockTypeLabelText, font: MyFontEnum.White);
         }
 
-        void stationButton_OnButtonClick(MyGuiControlButton sender)
+        /// <summary>
+        /// Generates list of block info controls from base block and its stages.
+        /// </summary>
+        /// <param name="blockDefinition">Definition of the block</param>
+        /// <param name="blockInfoStyle">Block info style used in Block info control.</param>
+        /// <returns>Array of block info controls.</returns>
+        private MyGuiControlBase[] GenerateBlockInfos(MyCubeBlockDefinition blockDefinition, ref MyGuiControlBlockInfo.MyControlBlockInfoStyle blockInfoStyle)
         {
-            CreateGrid(MyCubeSize.Large, isStatic: true);
-        }
+            int blockCt = blockDefinition.BlockStages != null ? blockDefinition.BlockStages.Length + 2 : 2;
+            bool blockSizeLarge = blockDefinition.CubeSize == MyCubeSize.Large;
 
-        void CreateGrid(MyCubeSize cubeSize, bool isStatic)
-        {
-            if (!MyEntities.MemoryLimitReachedReport && !MySandboxGame.IsPaused)
+            MyGuiControlBase[] blockInfos = new MyGuiControlBase[blockCt];
+
+            blockInfos[0] = GenerateSizeInfoLabel(blockSizeLarge);
+            blockInfos[1] = CreateBlockInfoControl(blockDefinition, blockSizeLarge, ref blockInfoStyle);
+
+            // No stages, just return base block info.
+            if (blockCt == 1)
+                return blockInfos;
+
+            for (int idx = 0; idx < blockCt - 2; idx++)
             {
-                MySessionComponentVoxelHand.Static.Enabled = false;
-                MyCubeBuilder.Static.StartNewGridPlacement(cubeSize, isStatic);
-                var character = MySession.LocalCharacter;
+                MyCubeBlockDefinition blockStageDefinition = null;
+                bool result = MyDefinitionManager.Static.TryGetDefinition(blockDefinition.BlockStages[idx], out blockStageDefinition);
+                bool isAvailable = result && (blockStageDefinition.AvailableInSurvival || MySession.Static.CreativeMode);
+                if (!isAvailable)
+                    continue;
 
-                Debug.Assert(character != null);
-                if (character != null)
-                {
-                    MyDefinitionId weaponDefinition = new MyDefinitionId(typeof(MyObjectBuilder_CubePlacer));
-                    character.SwitchToWeapon(weaponDefinition);
-                }
+                blockInfos[idx + 2] = CreateBlockInfoControl(blockStageDefinition, blockSizeLarge, ref blockInfoStyle);
             }
-            CloseScreen();
+
+            return blockInfos;
         }
+
+        private MyGuiControlBlockInfo CreateBlockInfoControl(MyCubeBlockDefinition blockDefinition, bool blockSizeLarge, ref MyGuiControlBlockInfo.MyControlBlockInfoStyle blockInfoStyle)
+        {
+            MyGuiControlBlockInfo blockInfo = new MyGuiControlBlockInfo(blockInfoStyle, false, blockSizeLarge)
+            {
+                OriginAlign = MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP,
+                BlockInfo = new MyHudBlockInfo(),
+            };
+            blockInfo.BlockInfo.LoadDefinition(blockDefinition);
+            blockInfo.RecalculateSize();
+
+            return blockInfo;
+        } 
     }
 }

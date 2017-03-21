@@ -3,16 +3,18 @@ using Sandbox.Game.AI.Pathfinding;
 using Sandbox.Game.Entities;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using VRage;
-using VRageMath;
+using VRage.Game.Entity;
+using VRage.ModAPI;using VRage.Profiler;using VRageMath;
 
 namespace Sandbox.Game.AI.Navigation
 {
     public class MyPathSteering : MyTargetSteering
     {
-        private MySmartPath m_path;
+        private IMyPath m_path;
         private float m_weight;
 
         private const float END_RADIUS = 0.5f;
@@ -30,7 +32,7 @@ namespace Sandbox.Game.AI.Navigation
         }
 
         // CH: TODO: Make a path pool and transfer ownership by calling this method (or any similar)
-        public void SetPath(MySmartPath path, float weight = 1.0f)
+        public void SetPath(IMyPath path, float weight = 1.0f)
         {
             if (path == null || !path.IsValid)
             {
@@ -40,7 +42,7 @@ namespace Sandbox.Game.AI.Navigation
 
             if (m_path != null)
             {
-                m_path.Dispose();
+                m_path.Invalidate();
             }
 
             m_path = path;
@@ -56,7 +58,7 @@ namespace Sandbox.Game.AI.Navigation
             ProfilerShort.Begin("UnsetPath");
             if (m_path != null)
             {
-                m_path.Dispose();
+                m_path.Invalidate();
             }
             m_path = null;
             UnsetTarget();
@@ -91,7 +93,9 @@ namespace Sandbox.Game.AI.Navigation
                 {
                     if (distSq < DISTANCE_FOR_FINAL_APPROACH * DISTANCE_FOR_FINAL_APPROACH)
                     {
-                        var endEntity = m_path.EndEntity;
+                        IMyEntity endEntityInterface = m_path.EndEntity;
+                        var endEntity = endEntityInterface as MyEntity;
+                        Debug.Assert(endEntityInterface == null || endEntityInterface is MyEntity, "The entity returned by IMyPath was not a MyEntity!");
                         UnsetPath();
                         SetTarget(closestPoint, END_RADIUS, endEntity, m_weight);
                         return;
@@ -109,8 +113,13 @@ namespace Sandbox.Game.AI.Navigation
                     }
                 }
 
-                ProfilerShort.Begin("MySmartPath.GetNextTarget");
-                bool result = m_path.GetNextTarget(Parent.PositionAndOrientation.Translation, out targetWorld, out radius, out relativeEntity);
+                ProfilerShort.Begin("IMyPath.GetNextTarget");
+                MyPathfindingStopwatch.Start();
+                IMyEntity relativeEntityInterface;
+                bool result = m_path.GetNextTarget(Parent.PositionAndOrientation.Translation, out targetWorld, out radius, out relativeEntityInterface);
+                relativeEntity = relativeEntityInterface as MyEntity;
+                Debug.Assert(relativeEntityInterface == null || relativeEntityInterface is MyEntity, "Relative entity returned by IMyPath was not a MyEntity!");
+                MyPathfindingStopwatch.Stop();
                 ProfilerShort.End();
 
                 if (result)
@@ -149,7 +158,7 @@ namespace Sandbox.Game.AI.Navigation
 
             if (m_path != null && m_path.IsValid)
             {
-                m_path.Dispose();
+                m_path.Invalidate();
             }
         }
 
