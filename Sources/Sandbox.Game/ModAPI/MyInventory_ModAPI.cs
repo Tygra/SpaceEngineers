@@ -99,7 +99,7 @@ namespace Sandbox.Game
             }
             return false;
         }
-
+        //what
         List<IMyConveyorEndpoint> reachableVertices = new List<IMyConveyorEndpoint>();
 
         private bool IsConnected(MyInventory dstInventory)
